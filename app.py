@@ -5,7 +5,7 @@ import re
 from streamlit_option_menu import option_menu
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Gestão LCPC", layout="wide")
+st.set_page_config(page_title="LCPC", layout="wide")
 
 # --- INICIALIZAÇÃO DO BANCO DE DADOS (SESSION STATE) ---
 if "jogadores" not in st.session_state:
