@@ -1,0 +1,14 @@
+credentials:
+  usernames:
+    adrian:
+      password: "123"
+      email: "adrian@email.com"
+      name: "Adrian Malta"
+    jogador1:
+      password: "456"
+      email: "jogador1@email.com"
+      name: "Jogador Teste"
+cookie:
+  name: "LCPC_Auth"
+  key: "uma_chave_muito_secreta"
+  expiry_days: 30
