@@ -54,6 +54,17 @@ def carregar_dados():
 
     return jogadores, partidas
 
+@st.cache_data(ttl=3600)
+def carregar_catalogo():
+    """Carrega o catálogo de precons do Supabase. Cache de 1 hora."""
+    dados = sb.table("catalogo_precons").select("id, nome, comandantes, set_nome, data_lancamento, cartas").execute().data
+    return dados if dados else []
+
+def buscar_precon_por_nome(nome_deck):
+    """Busca um precon específico pelo nome no Supabase."""
+    resultado = sb.table("catalogo_precons").select("*").eq("nome", nome_deck).execute().data
+    return resultado[0] if resultado else None
+
 # --- FUNÇÕES DE ESCRITA ---
 def salvar_jogador(nome, dados):
     sb.table("jogadores").upsert({
@@ -99,11 +110,91 @@ if "dados_carregados" not in st.session_state:
 if "mensagem_sucesso_partida" not in st.session_state:
     st.session_state.mensagem_sucesso_partida = None
 
+if "deck_precon_preview" not in st.session_state:
+    st.session_state.deck_precon_preview = None
+
+if "busca_precon" not in st.session_state:
+    st.session_state.busca_precon = ""
+
 # --- FUNÇÃO AUXILIAR: RETORNA O NOME DE EXIBIÇÃO (APELIDO OU NOME) ---
 def obter_nome_exibicao(dados_jogador, nome_chave):
     if dados_jogador.get("apelido"):
         return dados_jogador["apelido"]
     return nome_chave
+
+# --- FUNÇÃO: EXIBE LISTA DE CARTAS COM HOVER DE IMAGEM ---
+def exibir_lista_cartas(cartas):
+    """Exibe a lista de cartas de um deck com tooltip de imagem ao passar o mouse."""
+
+    # Agrupa as cartas por tipo simples (Terreno / Não-Terreno)
+    # A separação mais refinada exigiria dados extras do Scryfall
+    terrenos = [c for c in cartas if any(t in c["nome"] for t in [
+        "Plains", "Island", "Swamp", "Mountain", "Forest",
+        "Wastes", "Command Tower", "Path of Ancestry"
+    ])]
+    # Como não temos o tipo salvo, vamos exibir todas ordenadas alfabeticamente
+    cartas_ordenadas = sorted(cartas, key=lambda c: c["nome"])
+
+    # CSS para o tooltip de imagem
+    st.markdown("""
+    <style>
+    .card-list-item {
+        position: relative;
+        display: inline-block;
+        padding: 2px 6px;
+        margin: 1px 0;
+        cursor: default;
+        border-radius: 4px;
+        font-size: 14px;
+        width: 100%;
+    }
+    .card-list-item:hover {
+        background-color: rgba(255,255,255,0.08);
+    }
+    .card-list-item .card-tooltip {
+        display: none;
+        position: fixed;
+        z-index: 9999;
+        width: 220px;
+        border-radius: 8px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+        pointer-events: none;
+    }
+    .card-list-item:hover .card-tooltip {
+        display: block;
+        top: 50%;
+        left: 320px;
+        transform: translateY(-50%);
+    }
+    .card-tooltip img {
+        width: 220px;
+        border-radius: 8px;
+    }
+    .qty-badge {
+        display: inline-block;
+        min-width: 22px;
+        text-align: center;
+        background: rgba(255,255,255,0.12);
+        border-radius: 3px;
+        margin-right: 6px;
+        font-size: 12px;
+        padding: 0 4px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    html = '<div style="column-count:2; column-gap:20px;">'
+    for carta in cartas_ordenadas:
+        nome = carta["nome"]
+        qtd = carta.get("quantidade", 1)
+        img = carta.get("imagem_url", "")
+        tooltip = f'<span class="card-tooltip"><img src="{img}" alt="{nome}"/></span>' if img else ""
+        html += f'''
+        <div class="card-list-item">
+            <span class="qty-badge">{qtd}x</span>{nome}{tooltip}
+        </div>'''
+    html += "</div>"
+    st.markdown(html, unsafe_allow_html=True)
 
 # --- BARRA LATERAL (LOGO E MENU) ---
 formatos_logo = ["logo.jpg", "logo.jpeg", "logo.png", "logo.PNG", "logo.JPG", "logo.png.jpg"]
@@ -190,8 +281,6 @@ elif aba == "Cadastro":
             st.markdown("Telefone <span style='color:red;'>*</span>", unsafe_allow_html=True)
             telefone = st.text_input("", label_visibility="collapsed", key="txt_cad_telefone_real")
 
-            # BUG CORRIGIDO: e-mail era marcado como obrigatório na tela mas não era validado como tal.
-            # Agora a validação exige e-mail, consistente com o asterisco exibido.
             st.markdown("E-mail <span style='color:red;'>*</span>", unsafe_allow_html=True)
             email = st.text_input("", label_visibility="collapsed", key="txt_cad_email_real")
 
@@ -294,7 +383,7 @@ elif aba == "Cadastro":
         else:
             st.info("Nenhum jogador cadastrado.")
 
-# --- ABA: JOGADORES (CONSULTA, DECKS E EDIÇÃO DE DECKS) ---
+# --- ABA: JOGADORES ---
 elif aba == "Jogadores":
     st.header("Perfis e Arsenal")
     if st.session_state.jogadores:
@@ -304,8 +393,7 @@ elif aba == "Jogadores":
 
         jogador_sel_exibicao = st.selectbox("Visualizar jogador:", list(opcoes_selectbox.keys()), key="sel_ver_jogador_real")
 
-        if_valido_real = jogador_sel_exibicao != "Selecione um jogador..."
-        if if_valido_real:
+        if jogador_sel_exibicao != "Selecione um jogador...":
             jogador_real = opcoes_selectbox[jogador_sel_exibicao]
             dados_j = st.session_state.jogadores[jogador_real]
 
@@ -323,12 +411,42 @@ elif aba == "Jogadores":
 
                 st.divider()
                 st.subheader("Decks do Arsenal")
+
                 if dados_j["decks"]:
+                    # Exibe os decks vinculados com botão para ver lista
                     for nome_d, info_d in dados_j["decks"].items():
                         cmd_str = f"Primário: {info_d['comandante_primario']} | Secundário: {info_d['comandante_secundario']}"
                         if info_d.get("comandante_adicional"):
                             cmd_str += f" | Adicional: {info_d['comandante_adicional']}"
-                        st.link_button(f"{nome_d.upper()} ({cmd_str})", info_d["url"], key=f"lnk_{nome_d}")
+
+                        col_dk, col_btn_ver = st.columns([3, 1])
+                        with col_dk:
+                            st.markdown(f"**{nome_d.upper()}**  \n{cmd_str}")
+                        with col_btn_ver:
+                            if st.button("Ver Lista", key=f"ver_lista_{jogador_real}_{nome_d}"):
+                                precon = buscar_precon_por_nome(nome_d)
+                                if precon:
+                                    st.session_state.deck_precon_preview = precon
+                                    st.session_state.deck_preview_context = "arsenal"
+                                else:
+                                    st.warning("Lista não encontrada no catálogo.")
+
+                    st.markdown("<br>", unsafe_allow_html=True)
+
+                    # Preview da lista se estiver ativo no contexto do arsenal
+                    if st.session_state.get("deck_preview_context") == "arsenal" and st.session_state.deck_precon_preview:
+                        precon = st.session_state.deck_precon_preview
+                        with st.expander(f"Lista: {precon['nome']}", expanded=True):
+                            cmds = precon.get("comandantes", [])
+                            if cmds:
+                                st.markdown(f"**Comandantes:** {' | '.join(cmds)}")
+                            st.markdown(f"*{precon.get('set_nome', '')}*")
+                            st.divider()
+                            exibir_lista_cartas(precon.get("cartas", []))
+                            if st.button("Fechar Lista", key="fechar_preview_arsenal"):
+                                st.session_state.deck_precon_preview = None
+                                st.session_state.deck_preview_context = None
+                                st.rerun()
 
                     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -373,49 +491,98 @@ elif aba == "Jogadores":
                     st.info("Sem decks vinculados no momento.")
 
                 st.divider()
+
+                # --- CADASTRAR NOVO DECK VIA CATÁLOGO ---
                 if "mostrar_form_deck" not in st.session_state:
                     st.session_state.mostrar_form_deck = False
 
                 if not st.session_state.mostrar_form_deck:
                     if st.button("CADASTRAR NOVO DECK"):
                         st.session_state.mostrar_form_deck = True
+                        st.session_state.deck_precon_preview = None
+                        st.session_state.deck_preview_context = None
+                        st.session_state.busca_precon = ""
                         st.rerun()
                 else:
-                    st.write("**Cadastrar Novo Deck**")
-                    # BUG CORRIGIDO: botão "Cancelar" estava dentro do st.form, o que impedia
-                    # seu funcionamento correto. Movido para fora do formulário.
-                    with st.form("form_adicionar_deck", clear_on_submit=True):
-                        nome_deck = st.text_input("Nome do Deck Precon*:", key="txt_dk_nome")
-                        cmd_p = st.text_input("Comandante Primário*:", key="txt_dk_cmd_p")
-                        cmd_s = st.text_input("Comandante Secundário*:", key="txt_dk_cmd_s")
-                        cmd_a = st.text_input("Comandante Adicional (Opcional):", key="txt_dk_cmd_a")
-                        url_moxfield = st.text_input("Link do Moxfield*:", key="txt_dk_url")
+                    st.write("**Buscar Deck no Catálogo**")
 
-                        st.markdown("<span style='color:red;'>* Campos obrigatórios para o deck</span>", unsafe_allow_html=True)
+                    catalogo = carregar_catalogo()
+                    nomes_catalogo = [d["nome"] for d in catalogo]
 
-                        botao_vinculo = st.form_submit_button("Vincular Deck")
+                    busca = st.text_input(
+                        "Digite o nome do deck (ou parte dele):",
+                        value=st.session_state.busca_precon,
+                        key="txt_busca_precon",
+                        placeholder="Ex: Goblin, Dragon, Wilhelt..."
+                    )
+                    st.session_state.busca_precon = busca
 
-                        if botao_vinculo:
-                            if cmd_p and cmd_s and nome_deck and url_moxfield:
+                    # Sugestões em tempo real
+                    if busca.strip():
+                        sugestoes = [n for n in nomes_catalogo if busca.strip().lower() in n.lower()]
+
+                        if sugestoes:
+                            st.markdown(f"*{len(sugestoes)} deck(s) encontrado(s):*")
+                            for sug in sugestoes[:10]:  # limita a 10 sugestões
+                                if st.button(sug, key=f"sug_{sug}"):
+                                    precon_completo = buscar_precon_por_nome(sug)
+                                    st.session_state.deck_precon_preview = precon_completo
+                                    st.session_state.deck_preview_context = "cadastro"
+                                    st.rerun()
+                        else:
+                            st.info("Nenhum deck encontrado com esse nome. Tente outro termo.")
+
+                    # Preview do deck selecionado no contexto de cadastro
+                    if st.session_state.get("deck_preview_context") == "cadastro" and st.session_state.deck_precon_preview:
+                        precon = st.session_state.deck_precon_preview
+                        st.divider()
+                        st.markdown(f"### {precon['nome']}")
+                        cmds = precon.get("comandantes", [])
+                        if cmds:
+                            st.markdown(f"**Comandantes:** {' | '.join(cmds)}")
+                        st.markdown(f"*{precon.get('set_nome', '')}*")
+
+                        col_vincular, col_fechar = st.columns([1, 1])
+                        with col_vincular:
+                            if st.button("✔ Vincular este Deck ao Perfil", type="primary", key="btn_vincular_precon"):
+                                nome_deck = precon["nome"]
+                                cmds = precon.get("comandantes", [])
+                                cmd_p = cmds[0] if len(cmds) > 0 else "Desconhecido"
+                                cmd_s = cmds[1] if len(cmds) > 1 else cmd_p
+                                cmd_a = cmds[2] if len(cmds) > 2 else ""
+
                                 if nome_deck not in dados_j["decks"]:
                                     novo_deck = {
-                                        "comandante_primario": cmd_p.strip(),
-                                        "comandante_secundario": cmd_s.strip(),
-                                        "comandante_adicional": cmd_a.strip() if cmd_a else "",
-                                        "url": url_moxfield.strip()
+                                        "comandante_primario": cmd_p,
+                                        "comandante_secundario": cmd_s,
+                                        "comandante_adicional": cmd_a,
+                                        "url": ""
                                     }
                                     dados_j["decks"][nome_deck] = novo_deck
                                     salvar_deck(jogador_real, nome_deck, novo_deck)
-                                    st.success(f"Deck '{nome_deck}' adicionado com sucesso!")
+                                    st.session_state.deck_precon_preview = None
+                                    st.session_state.deck_preview_context = None
                                     st.session_state.mostrar_form_deck = False
+                                    st.session_state.busca_precon = ""
+                                    st.success(f"Deck '{nome_deck}' vinculado com sucesso!")
                                     st.rerun()
                                 else:
-                                    st.warning("Este deck já está cadastrado.")
-                            else:
-                                st.error("Preencha Nome, Comandante Primário, Secundário e o Link.")
+                                    st.warning("Este deck já está vinculado ao seu perfil.")
+                        with col_fechar:
+                            if st.button("✖ Escolher outro deck", key="btn_cancelar_preview"):
+                                st.session_state.deck_precon_preview = None
+                                st.session_state.deck_preview_context = None
+                                st.rerun()
+
+                        st.divider()
+                        st.markdown("**Lista de Cartas:**")
+                        exibir_lista_cartas(precon.get("cartas", []))
 
                     if st.button("Cancelar", key="btn_cancelar_deck"):
                         st.session_state.mostrar_form_deck = False
+                        st.session_state.deck_precon_preview = None
+                        st.session_state.deck_preview_context = None
+                        st.session_state.busca_precon = ""
                         st.rerun()
     else:
         st.info("Nenhum jogador cadastrado. Vá até a aba 'Cadastro' para começar.")
@@ -423,28 +590,104 @@ elif aba == "Jogadores":
 # --- ABA: DECKS (ARSENAL GERAL DA LIGA) ---
 elif aba == "Decks":
     st.header("Arsenal Geral da LCPC")
-    todos_os_decks = []
+
+    # Monta lista de decks vinculados e quem os possui
+    decks_escolhidos = []
+    nomes_decks_escolhidos = {}  # {nome_deck: [lista de donos]}
+
     for nome_jog, dados_jog in st.session_state.jogadores.items():
         exibicao_jog = obter_nome_exibicao(dados_jog, nome_jog)
         for nome_dk, info_dk in dados_jog["decks"].items():
             cmd_str = f"1º: {info_dk['comandante_primario']} | 2º: {info_dk['comandante_secundario']}"
             if info_dk.get("comandante_adicional"):
                 cmd_str += f" | 3º: {info_dk['comandante_adicional']}"
-
-            todos_os_decks.append({
-                "Deck": nome_dk.upper(), "Comandantes": cmd_str, "Dono": exibicao_jog, "Link": info_dk["url"]
+            decks_escolhidos.append({
+                "Deck": nome_dk.upper(), "Comandantes": cmd_str,
+                "Dono": exibicao_jog, "nome_real": nome_dk
             })
+            if nome_dk not in nomes_decks_escolhidos:
+                nomes_decks_escolhidos[nome_dk] = []
+            nomes_decks_escolhidos[nome_dk].append(exibicao_jog)
 
-    if todos_os_decks:
-        df_decks = pd.DataFrame(todos_os_decks)
-        st.subheader("Todos os Decks Cadastrados na Temporada")
-        st.dataframe(df_decks[["Deck", "Comandantes", "Dono"]], use_container_width=True, hide_index=True)
-        st.divider()
-        st.write("**Acesso rápido às listas das mesas:**")
-        for idx, dk in enumerate(todos_os_decks):
-            st.link_button(f"{dk['Deck']} ({dk['Dono']})", dk['Link'], key=f"lnk_geral_{idx}")
+    # --- BLOCO 1: DECKS ESCOLHIDOS ---
+    st.subheader("Decks Escolhidos")
+    if decks_escolhidos:
+        for dk in decks_escolhidos:
+            with st.expander(f"{dk['Deck']} — {dk['Dono']}"):
+                st.markdown(f"**Comandantes:** {dk['Comandantes']}")
+                if st.button("Ver Lista de Cartas", key=f"ver_lista_escolhido_{dk['Deck']}_{dk['Dono']}"):
+                    precon = buscar_precon_por_nome(dk["nome_real"])
+                    if precon:
+                        st.session_state.deck_precon_preview = precon
+                        st.session_state.deck_preview_context = f"escolhido_{dk['nome_real']}_{dk['Dono']}"
+                    else:
+                        st.warning("Lista não encontrada no catálogo.")
+
+                ctx_key = f"escolhido_{dk['nome_real']}_{dk['Dono']}"
+                if st.session_state.get("deck_preview_context") == ctx_key and st.session_state.deck_precon_preview:
+                    precon = st.session_state.deck_precon_preview
+                    st.divider()
+                    exibir_lista_cartas(precon.get("cartas", []))
+                    if st.button("Fechar Lista", key=f"fechar_{ctx_key}"):
+                        st.session_state.deck_precon_preview = None
+                        st.session_state.deck_preview_context = None
+                        st.rerun()
     else:
-        st.info("Nenhum deck foi cadastrado na liga ainda.")
+        st.info("Nenhum deck foi vinculado a jogadores ainda.")
+
+    st.divider()
+
+    # --- BLOCO 2: DECKS DISPONÍVEIS ---
+    st.subheader("Decks Disponíveis no Catálogo")
+    catalogo = carregar_catalogo()
+
+    if catalogo:
+        busca_catalogo = st.text_input("Filtrar catálogo:", placeholder="Digite para filtrar...", key="filtro_catalogo")
+
+        catalogo_filtrado = catalogo
+        if busca_catalogo.strip():
+            catalogo_filtrado = [d for d in catalogo if busca_catalogo.strip().lower() in d["nome"].lower()]
+
+        st.markdown(f"*{len(catalogo_filtrado)} deck(s) no catálogo*")
+
+        for deck_cat in catalogo_filtrado:
+            nome_cat = deck_cat["nome"]
+            cmds_cat = deck_cat.get("comandantes", [])
+            donos = nomes_decks_escolhidos.get(nome_cat, [])
+
+            # Monta label com aviso se já foi escolhido
+            if donos:
+                label_aviso = f"⚠️ Já escolhido por: {', '.join(donos)}"
+                label_expander = f"{nome_cat.upper()} — {label_aviso}"
+            else:
+                label_expander = f"{nome_cat.upper()}"
+
+            with st.expander(label_expander):
+                if cmds_cat:
+                    st.markdown(f"**Comandantes:** {' | '.join(cmds_cat)}")
+                st.markdown(f"*{deck_cat.get('set_nome', '')}*")
+                if donos:
+                    st.warning(f"Este deck já foi escolhido por: **{', '.join(donos)}**. Você ainda pode vinculá-lo, mas considere escolher um diferente!")
+
+                if st.button("Ver Lista de Cartas", key=f"ver_cat_{nome_cat}"):
+                    precon_full = buscar_precon_por_nome(nome_cat)
+                    if precon_full:
+                        st.session_state.deck_precon_preview = precon_full
+                        st.session_state.deck_preview_context = f"catalogo_{nome_cat}"
+                    else:
+                        st.warning("Lista não encontrada.")
+
+                ctx_cat = f"catalogo_{nome_cat}"
+                if st.session_state.get("deck_preview_context") == ctx_cat and st.session_state.deck_precon_preview:
+                    precon = st.session_state.deck_precon_preview
+                    st.divider()
+                    exibir_lista_cartas(precon.get("cartas", []))
+                    if st.button("Fechar Lista", key=f"fechar_cat_{nome_cat}"):
+                        st.session_state.deck_precon_preview = None
+                        st.session_state.deck_preview_context = None
+                        st.rerun()
+    else:
+        st.info("Catálogo de precons não encontrado.")
 
 # --- ABA: NOVA PARTIDA ---
 elif aba == "Nova Partida":
@@ -474,7 +717,6 @@ elif aba == "Nova Partida":
         st.divider()
         st.subheader("Configuração dos Integrantes da Mesa")
 
-        # --- LÓGICA DE DUPLAS ---
         if modo_partida == "DRAGÃO DE DUAS CABEÇAS":
             col_d1, col_d2 = st.columns(2)
             with col_d1:
@@ -490,7 +732,6 @@ elif aba == "Nova Partida":
                         if dk_obj.get("comandante_adicional"):
                             opcoes_cmd.append(dk_obj["comandante_adicional"])
                         c1 = st.selectbox("Comandante em Campo (J1):", ["Selecione..."] + opcoes_cmd, key="dupla_c1")
-
                 st.markdown("---")
                 opcoes_j2 = ["Selecione..."] + [n for n in list(mapa_exib_para_real.keys()) if n != j1]
                 j2 = st.selectbox("Jogador 2 (Dupla A):", opcoes_j2, key="dupla_j2")
@@ -519,7 +760,6 @@ elif aba == "Nova Partida":
                         if dk_obj.get("comandante_adicional"):
                             opcoes_cmd.append(dk_obj["comandante_adicional"])
                         c3 = st.selectbox("Comandante em Campo (J3):", ["Selecione..."] + opcoes_cmd, key="dupla_c3")
-
                 st.markdown("---")
                 opcoes_j4 = ["Selecione..."] + [n for n in list(mapa_exib_para_real.keys()) if n not in [j1, j2, j3]]
                 j4 = st.selectbox("Jogador 4 (Dupla B):", opcoes_j4, key="dupla_j4")
@@ -555,18 +795,15 @@ elif aba == "Nova Partida":
                             "Jogadores": 4, "Detalhes_Pontuacao": detalhes
                         }])
                         st.session_state.partidas = pd.concat([st.session_state.partidas, nova_linha], ignore_index=True)
-
                         for key in ["dupla_j1", "dupla_d1", "dupla_c1", "dupla_j2", "dupla_d2", "dupla_c2",
                                     "dupla_j3", "dupla_d3", "dupla_c3", "dupla_j4", "dupla_d4", "dupla_c4"]:
                             if key in st.session_state:
                                 del st.session_state[key]
-
                         st.session_state.mensagem_sucesso_partida = "Resultado de duplas gravado com sucesso!"
                         st.rerun()
                 else:
                     st.info("Aguardando a seleção de todos os integrantes, decks e comandantes para liberar a gravação...")
 
-        # --- LÓGICA SOLO ---
         else:
             selecionados_nomes = []
             colunas_jogadores = st.columns(qtd_jogadores)
@@ -653,8 +890,6 @@ elif aba == "Ranking":
         with c2: f_modo = st.selectbox("Modo:", ["TODOS", "SOLO", "DRAGÃO DE DUAS CABEÇAS"])
         with c3: f_tipo = st.selectbox("Ranking por:", ["Competidor", "Deck", "Comandante"])
 
-        # BUG CORRIGIDO: o DataFrame filtrado (df) era ignorado na construção do ranking,
-        # que sempre iterava sobre st.session_state.partidas sem filtro.
         df = st.session_state.partidas.copy()
         if f_local != "TODOS":
             df = df[df["Local"] == f_local]
@@ -663,18 +898,16 @@ elif aba == "Ranking":
 
         if not df.empty:
             dados_rank = []
-            for _, row in df.iterrows():  # usa df filtrado, não session_state.partidas
+            for _, row in df.iterrows():
                 for item in row["Detalhes_Pontuacao"]:
                     deck_raw = item.get("Deck", "Desconhecido")
                     nome_jogador = item.get("Jogador", "Jogador Removido")
-
                     if " (" in deck_raw:
                         deck_nome = deck_raw.split(" (")[0]
                         cmd_nome = deck_raw.split(" (")[1].replace(")", "")
                     else:
                         deck_nome = deck_raw
                         cmd_nome = "Desconhecido"
-
                     dados_rank.append({
                         "Competidor": nome_jogador,
                         "Deck": deck_nome,
@@ -716,13 +949,8 @@ elif aba == "Ranking":
                 df_detalhe = pd.DataFrame(row["Detalhes_Pontuacao"])
                 st.table(df_detalhe[["Jogador", "Deck", "Pontos"]])
 
-                # BUG CORRIGIDO: botão "Editar" setava session_state mas não havia
-                # nenhuma lógica que lesse esse valor. Botão removido para não gerar
-                # expectativa de funcionalidade inexistente.
                 col_btn_excluir, _ = st.columns([1, 3])
                 with col_btn_excluir:
-                    # BUG CORRIGIDO: exclusão de partida não tinha confirmação.
-                    # Adicionado aviso de confirmação consistente com o padrão do resto do app.
                     if st.button(f"Excluir Partida #{row['ID']}", key=f"del_{row['ID']}"):
                         st.session_state[f"confirmar_excluir_partida_{row['ID']}"] = True
                         st.rerun()
