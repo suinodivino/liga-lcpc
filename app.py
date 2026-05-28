@@ -133,6 +133,9 @@ if "dados_carregados" not in st.session_state:
 if "mensagem_sucesso_partida" not in st.session_state:
     st.session_state.mensagem_sucesso_partida = None
 
+if "mensagem_sucesso_perfil" not in st.session_state:
+    st.session_state.mensagem_sucesso_perfil = None
+
 if "deck_precon_preview" not in st.session_state:
     st.session_state.deck_precon_preview = None
 
@@ -334,6 +337,9 @@ elif aba == "Cadastro":
 
     with tab_editar:
         st.subheader("Editar Perfil Existente")
+        if st.session_state.get("mensagem_sucesso_perfil"):
+            st.success(st.session_state.mensagem_sucesso_perfil)
+            st.session_state.mensagem_sucesso_perfil = None
         if st.session_state.jogadores:
             opcoes_edicao = ["Selecione um jogador..."] + list(st.session_state.jogadores.keys())
             jog_editar_real = st.selectbox("Escolha o perfil que deseja alterar:", opcoes_edicao, key="sel_edit_jog")
@@ -368,7 +374,7 @@ elif aba == "Cadastro":
                             nova_url = upload_foto(jog_editar_real, nova_foto.read(), ext)
                             st.session_state.jogadores[jog_editar_real]["foto_url"] = nova_url
                         salvar_jogador(jog_editar_real, st.session_state.jogadores[jog_editar_real])
-                        st.success("Perfil atualizado!")
+                        st.session_state.mensagem_sucesso_perfil = f"Perfil de {jog_editar_real} atualizado com sucesso!"
                         st.rerun()
         else:
             st.info("Nenhum jogador cadastrado para editar.")
