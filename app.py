@@ -16,6 +16,29 @@ def get_supabase():
 
 sb = get_supabase()
 
+# --- FUNÇÕES DE FOTO (SUPABASE STORAGE) ---
+def upload_foto(nome_jogador, foto_bytes, extensao="jpg"):
+    """Faz upload da foto para o Supabase Storage e retorna a URL pública."""
+    try:
+        caminho = f"{nome_jogador}.{extensao}"
+        sb.storage.from_("fotos-jogadores").upload(
+            caminho, foto_bytes,
+            file_options={"content-type": f"image/{extensao}", "upsert": "true"}
+        )
+        url = sb.storage.from_("fotos-jogadores").get_public_url(caminho)
+        return url
+    except Exception as e:
+        print(f"Erro ao fazer upload da foto: {e}")
+        return ""
+
+def deletar_foto(nome_jogador):
+    """Remove a foto do jogador do Storage."""
+    for ext in ["jpg", "jpeg", "png"]:
+        try:
+            sb.storage.from_("fotos-jogadores").remove([f"{nome_jogador}.{ext}"])
+        except:
+            pass
+
 # --- FUNÇÕES DE LEITURA ---
 def carregar_dados():
     jogadores = {}
@@ -26,7 +49,7 @@ def carregar_dados():
             "apelido": j["apelido"] or "",
             "telefone": j["telefone"],
             "email": j["email"] or "",
-            "foto_bytes": None,
+            "foto_url": j.get("foto_url", "") or "",
             "decks": {}
         }
 
@@ -56,12 +79,10 @@ def carregar_dados():
 
 @st.cache_data(ttl=3600)
 def carregar_catalogo():
-    """Carrega o catálogo de precons do Supabase. Cache de 1 hora."""
     dados = sb.table("catalogo_precons").select("id, nome, comandantes, set_nome, data_lancamento, cartas").execute().data
     return dados if dados else []
 
 def buscar_precon_por_nome(nome_deck):
-    """Busca um precon específico pelo nome no Supabase."""
     resultado = sb.table("catalogo_precons").select("*").eq("nome", nome_deck).execute().data
     return resultado[0] if resultado else None
 
@@ -71,7 +92,8 @@ def salvar_jogador(nome, dados):
         "nome": nome,
         "apelido": dados["apelido"],
         "telefone": dados["telefone"],
-        "email": dados["email"]
+        "email": dados["email"],
+        "foto_url": dados.get("foto_url", "")
     }).execute()
 
 def salvar_deck(jogador_nome, nome_deck, info):
@@ -81,13 +103,14 @@ def salvar_deck(jogador_nome, nome_deck, info):
         "comandante_primario": info["comandante_primario"],
         "comandante_secundario": info["comandante_secundario"],
         "comandante_adicional": info.get("comandante_adicional", ""),
-        "url": info["url"]
+        "url": info.get("url", "")
     }, on_conflict="jogador_nome,nome_deck").execute()
 
 def excluir_deck_db(jogador_nome, nome_deck):
     sb.table("decks").delete().eq("jogador_nome", jogador_nome).eq("nome_deck", nome_deck).execute()
 
 def excluir_jogador_db(nome):
+    deletar_foto(nome)
     sb.table("jogadores").delete().eq("nome", nome).execute()
 
 def salvar_partida(local, modo, qtd_jogadores, detalhes):
@@ -116,7 +139,7 @@ if "deck_precon_preview" not in st.session_state:
 if "busca_precon" not in st.session_state:
     st.session_state.busca_precon = ""
 
-# --- FUNÇÃO AUXILIAR: RETORNA O NOME DE EXIBIÇÃO (APELIDO OU NOME) ---
+# --- FUNÇÃO AUXILIAR ---
 def obter_nome_exibicao(dados_jogador, nome_chave):
     if dados_jogador.get("apelido"):
         return dados_jogador["apelido"]
@@ -124,55 +147,29 @@ def obter_nome_exibicao(dados_jogador, nome_chave):
 
 # --- FUNÇÃO: EXIBE LISTA DE CARTAS COM HOVER DE IMAGEM ---
 def exibir_lista_cartas(cartas):
-    """Exibe a lista de cartas de um deck com tooltip de imagem ao passar o mouse."""
-
-    # Agrupa as cartas por tipo simples (Terreno / Não-Terreno)
-    # A separação mais refinada exigiria dados extras do Scryfall
-    terrenos = [c for c in cartas if any(t in c["nome"] for t in [
-        "Plains", "Island", "Swamp", "Mountain", "Forest",
-        "Wastes", "Command Tower", "Path of Ancestry"
-    ])]
-    # Como não temos o tipo salvo, vamos exibir todas ordenadas alfabeticamente
-    cartas_ordenadas = sorted(cartas, key=lambda c: c["nome"])
-
-    # CSS para o tooltip de imagem
     st.markdown("""
     <style>
-    .card-list-item {
+    .card-list-wrap {
+        column-count: 2;
+        column-gap: 24px;
+    }
+    @media (max-width: 768px) {
+        .card-list-wrap { column-count: 1; }
+    }
+    .card-item {
         position: relative;
-        display: inline-block;
-        padding: 2px 6px;
-        margin: 1px 0;
-        cursor: default;
+        display: block;
+        padding: 3px 8px;
+        margin: 2px 0;
         border-radius: 4px;
         font-size: 14px;
-        width: 100%;
+        cursor: default;
+        break-inside: avoid;
     }
-    .card-list-item:hover {
-        background-color: rgba(255,255,255,0.08);
-    }
-    .card-list-item .card-tooltip {
-        display: none;
-        position: fixed;
-        z-index: 9999;
-        width: 220px;
-        border-radius: 8px;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.6);
-        pointer-events: none;
-    }
-    .card-list-item:hover .card-tooltip {
-        display: block;
-        top: 50%;
-        left: 320px;
-        transform: translateY(-50%);
-    }
-    .card-tooltip img {
-        width: 220px;
-        border-radius: 8px;
-    }
-    .qty-badge {
+    .card-item:hover { background-color: rgba(255,255,255,0.08); }
+    .card-qty {
         display: inline-block;
-        min-width: 22px;
+        min-width: 24px;
         text-align: center;
         background: rgba(255,255,255,0.12);
         border-radius: 3px;
@@ -180,26 +177,48 @@ def exibir_lista_cartas(cartas):
         font-size: 12px;
         padding: 0 4px;
     }
+    .card-tooltip {
+        display: none;
+        position: fixed;
+        z-index: 99999;
+        pointer-events: none;
+        top: 50%;
+        transform: translateY(-50%);
+        left: 55%;
+        width: 280px;
+        border-radius: 10px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.7);
+    }
+    @media (max-width: 768px) {
+        .card-tooltip {
+            left: 50%;
+            transform: translate(-50%, -50%);
+            top: 40%;
+            width: 200px;
+        }
+    }
+    .card-tooltip img {
+        width: 100%;
+        border-radius: 10px;
+    }
+    .card-item:hover .card-tooltip { display: block; }
     </style>
     """, unsafe_allow_html=True)
 
-    html = '<div style="column-count:2; column-gap:20px;">'
+    cartas_ordenadas = sorted(cartas, key=lambda c: c["nome"])
+    html = '<div class="card-list-wrap">'
     for carta in cartas_ordenadas:
         nome = carta["nome"]
         qtd = carta.get("quantidade", 1)
         img = carta.get("imagem_url", "")
         tooltip = f'<span class="card-tooltip"><img src="{img}" alt="{nome}"/></span>' if img else ""
-        html += f'''
-        <div class="card-list-item">
-            <span class="qty-badge">{qtd}x</span>{nome}{tooltip}
-        </div>'''
+        html += f'<div class="card-item"><span class="card-qty">{qtd}x</span>{nome}{tooltip}</div>'
     html += "</div>"
     st.markdown(html, unsafe_allow_html=True)
 
-# --- BARRA LATERAL (LOGO E MENU) ---
+# --- BARRA LATERAL ---
 formatos_logo = ["logo.jpg", "logo.jpeg", "logo.png", "logo.PNG", "logo.JPG", "logo.png.jpg"]
 logo_encontrada = None
-
 for nome_arquivo in formatos_logo:
     if os.path.exists(nome_arquivo):
         logo_encontrada = nome_arquivo
@@ -218,22 +237,17 @@ with st.sidebar:
         styles={
             "container": {"padding": "0!important", "background-color": "transparent"},
             "nav-link": {
-                "font-size": "15px",
-                "text-align": "left",
-                "margin": "0px",
-                "background-color": "transparent",
-                "color": "#888888"
+                "font-size": "15px", "text-align": "left", "margin": "0px",
+                "background-color": "transparent", "color": "#888888"
             },
             "nav-link-selected": {
-                "background-color": "transparent",
-                "color": "#FFFFFF",
-                "font-weight": "bold",
-                "text-transform": "uppercase"
+                "background-color": "transparent", "color": "#FFFFFF",
+                "font-weight": "bold", "text-transform": "uppercase"
             }
         }
     )
 
-# --- ESTRUTURA PRINCIPAL DAS ABAS ---
+# ===================== HOME =====================
 if aba == "Home":
     container_home = st.container()
     with container_home:
@@ -263,32 +277,25 @@ Um abraço,<br>
 <em>Mana, vai!</em>
 """, unsafe_allow_html=True)
 
+# ===================== CADASTRO =====================
 elif aba == "Cadastro":
     st.header("Gerenciamento de Perfis")
-
     tab_criar, tab_editar, tab_excluir = st.tabs(["Novo Jogador", "Editar Perfil", "Excluir Jogador"])
 
     with tab_criar:
         st.subheader("Cadastrar Novo Jogador")
-
         with st.form("form_cadastro_jogador", clear_on_submit=True):
             st.markdown("Nome <span style='color:red;'>*</span>", unsafe_allow_html=True)
             nome = st.text_input("", label_visibility="collapsed", key="txt_cad_nome_real")
-
             st.markdown("Apelido")
             apelido = st.text_input("", label_visibility="collapsed", key="txt_cad_apelido_real")
-
             st.markdown("Telefone <span style='color:red;'>*</span>", unsafe_allow_html=True)
             telefone = st.text_input("", label_visibility="collapsed", key="txt_cad_telefone_real")
-
             st.markdown("E-mail <span style='color:red;'>*</span>", unsafe_allow_html=True)
             email = st.text_input("", label_visibility="collapsed", key="txt_cad_email_real")
-
             st.markdown("Foto do Jogador")
             foto = st.file_uploader("", type=["jpg", "png", "jpeg"], label_visibility="collapsed", key="file_cad_foto_real")
-
             st.markdown("<span style='color:red;'>* CAMPOS OBRIGATÓRIOS</span>", unsafe_allow_html=True)
-
             botao_salvar = st.form_submit_button("Salvar Cadastro")
 
             if botao_salvar:
@@ -296,7 +303,6 @@ elif aba == "Cadastro":
                 telefone = telefone.strip()
                 email = email.strip()
                 erros = []
-
                 if not nome or not telefone or not email:
                     erros.append("Preencha todos os campos obrigatórios (Nome, Telefone e E-mail).")
                 if nome and not re.match(r"^[A-Za-zÀ-ÖØ-öø-ÿ\s]+$", nome):
@@ -306,17 +312,19 @@ elif aba == "Cadastro":
                 if email:
                     padrao_email = r"^[\w\.-]+@[\w\.-]+\.(com|com\.br)$"
                     if not re.match(padrao_email, email):
-                        erros.append("O formato do E-mail é inválido. Deve conter '@' e terminar com '.com' ou '.com.br'.")
-
+                        erros.append("O formato do E-mail é inválido.")
                 if erros:
                     for erro in erros:
                         st.error(erro)
                 else:
                     if nome not in st.session_state.jogadores:
-                        foto_bytes = foto.read() if foto else None
+                        foto_url = ""
+                        if foto:
+                            ext = foto.name.split(".")[-1].lower()
+                            foto_url = upload_foto(nome, foto.read(), ext)
                         novo_jogador = {
-                            "apelido": apelido, "telefone": telefone, "email": email,
-                            "foto_bytes": foto_bytes, "decks": {}
+                            "apelido": apelido, "telefone": telefone,
+                            "email": email, "foto_url": foto_url, "decks": {}
                         }
                         st.session_state.jogadores[nome] = novo_jogador
                         salvar_jogador(nome, novo_jogador)
@@ -329,30 +337,25 @@ elif aba == "Cadastro":
         if st.session_state.jogadores:
             opcoes_edicao = ["Selecione um jogador..."] + list(st.session_state.jogadores.keys())
             jog_editar_real = st.selectbox("Escolha o perfil que deseja alterar:", opcoes_edicao, key="sel_edit_jog")
-
             if jog_editar_real != "Selecione um jogador...":
                 dados_edit = st.session_state.jogadores[jog_editar_real]
                 novo_apelido = st.text_input("Editar Apelido", value=dados_edit["apelido"], key="txt_edit_apelido")
                 novo_telefone = st.text_input("Editar Telefone", value=dados_edit["telefone"], key="txt_edit_telefone")
                 novo_email = st.text_input("Editar E-mail", value=dados_edit["email"], key="txt_edit_email")
                 nova_foto = st.file_uploader("Atualizar Foto", type=["jpg", "png", "jpeg"], key="file_edit_foto")
-
                 if st.button("Salvar Alterações", key="btn_salvar_edit"):
                     novo_telefone = novo_telefone.strip()
                     novo_email = novo_email.strip()
                     erros_edit = []
-
                     if not novo_telefone:
                         erros_edit.append("O campo Telefone não pode ficar vazio.")
                     elif not novo_telefone.isdigit():
                         erros_edit.append("O campo Telefone deve conter apenas números.")
-
                     padrao_email = r"^[\w\.-]+@[\w\.-]+\.(com|com\.br)$"
                     if not novo_email:
                         erros_edit.append("O campo E-mail não pode ficar vazio.")
                     elif not re.match(padrao_email, novo_email):
                         erros_edit.append("O formato do E-mail é inválido.")
-
                     if erros_edit:
                         for err in erros_edit:
                             st.error(err)
@@ -361,7 +364,9 @@ elif aba == "Cadastro":
                         st.session_state.jogadores[jog_editar_real]["telefone"] = novo_telefone
                         st.session_state.jogadores[jog_editar_real]["email"] = novo_email
                         if nova_foto:
-                            st.session_state.jogadores[jog_editar_real]["foto_bytes"] = nova_foto.read()
+                            ext = nova_foto.name.split(".")[-1].lower()
+                            nova_url = upload_foto(jog_editar_real, nova_foto.read(), ext)
+                            st.session_state.jogadores[jog_editar_real]["foto_url"] = nova_url
                         salvar_jogador(jog_editar_real, st.session_state.jogadores[jog_editar_real])
                         st.success("Perfil atualizado!")
                         st.rerun()
@@ -383,7 +388,7 @@ elif aba == "Cadastro":
         else:
             st.info("Nenhum jogador cadastrado.")
 
-# --- ABA: JOGADORES ---
+# ===================== JOGADORES =====================
 elif aba == "Jogadores":
     st.header("Perfis e Arsenal")
     if st.session_state.jogadores:
@@ -399,8 +404,9 @@ elif aba == "Jogadores":
 
             col1, col2 = st.columns([1, 2])
             with col1:
-                if dados_j["foto_bytes"]:
-                    st.image(dados_j["foto_bytes"], width=200, caption=f"Foto de {jogador_sel_exibicao}")
+                foto_url = dados_j.get("foto_url", "")
+                if foto_url:
+                    st.image(foto_url, width=200, caption=f"Foto de {jogador_sel_exibicao}")
                 else:
                     st.info("Jogador não possui foto cadastrada.")
             with col2:
@@ -413,12 +419,10 @@ elif aba == "Jogadores":
                 st.subheader("Decks do Arsenal")
 
                 if dados_j["decks"]:
-                    # Exibe os decks vinculados com botão para ver lista
                     for nome_d, info_d in dados_j["decks"].items():
                         cmd_str = f"Primário: {info_d['comandante_primario']} | Secundário: {info_d['comandante_secundario']}"
                         if info_d.get("comandante_adicional"):
                             cmd_str += f" | Adicional: {info_d['comandante_adicional']}"
-
                         col_dk, col_btn_ver = st.columns([3, 1])
                         with col_dk:
                             st.markdown(f"**{nome_d.upper()}**  \n{cmd_str}")
@@ -431,9 +435,6 @@ elif aba == "Jogadores":
                                 else:
                                     st.warning("Lista não encontrada no catálogo.")
 
-                    st.markdown("<br>", unsafe_allow_html=True)
-
-                    # Preview da lista se estiver ativo no contexto do arsenal
                     if st.session_state.get("deck_preview_context") == "arsenal" and st.session_state.deck_precon_preview:
                         precon = st.session_state.deck_precon_preview
                         with st.expander(f"Lista: {precon['nome']}", expanded=True):
@@ -450,33 +451,30 @@ elif aba == "Jogadores":
 
                     st.markdown("<br>", unsafe_allow_html=True)
 
-                    tab_gerenciar_existentes, tab_remover_existente = st.tabs(["Editar Comandantes / Link", "Excluir Deck"])
+                    # PONTO 3 CORRIGIDO: removido campo Link do Moxfield da edição
+                    tab_gerenciar_existentes, tab_remover_existente = st.tabs(["Editar Deck", "Excluir Deck"])
 
                     with tab_gerenciar_existentes:
                         opcoes_edit_dk = ["Selecione um deck para editar..."] + list(dados_j["decks"].keys())
                         dk_escolhido_edit = st.selectbox("Qual deck deseja alterar?", opcoes_edit_dk, key="sel_dk_gerenciamento_edit")
-
                         if dk_escolhido_edit != "Selecione um deck para editar...":
                             dados_dk_edit = dados_j["decks"][dk_escolhido_edit]
-
                             edit_cmd_p = st.text_input("Comandante Primário*", value=dados_dk_edit["comandante_primario"], key="txt_edit_cmd_p")
                             edit_cmd_s = st.text_input("Comandante Secundário*", value=dados_dk_edit["comandante_secundario"], key="txt_edit_cmd_s")
                             edit_cmd_a = st.text_input("Comandante Adicional (Opcional)", value=dados_dk_edit.get("comandante_adicional", ""), key="txt_edit_cmd_a")
-                            edit_url_mox = st.text_input("Link do Moxfield*", value=dados_dk_edit["url"], key="txt_edit_url_mox")
-
                             if st.button("Salvar Alterações do Deck", key="btn_confirmar_alteracoes_deck"):
-                                if edit_cmd_p and edit_cmd_s and edit_url_mox:
+                                if edit_cmd_p and edit_cmd_s:
                                     dados_j["decks"][dk_escolhido_edit] = {
                                         "comandante_primario": edit_cmd_p.strip(),
                                         "comandante_secundario": edit_cmd_s.strip(),
                                         "comandante_adicional": edit_cmd_a.strip() if edit_cmd_a else "",
-                                        "url": edit_url_mox.strip()
+                                        "url": dados_dk_edit.get("url", "")
                                     }
                                     salvar_deck(jogador_real, dk_escolhido_edit, dados_j["decks"][dk_escolhido_edit])
-                                    st.success(f"Configurações do deck '{dk_escolhido_edit}' atualizadas!")
+                                    st.success(f"Deck '{dk_escolhido_edit}' atualizado!")
                                     st.rerun()
                                 else:
-                                    st.error("Campos com * são obrigatórios.")
+                                    st.error("Comandante Primário e Secundário são obrigatórios.")
 
                     with tab_remover_existente:
                         opcoes_deck = ["Selecione um deck..."] + list(dados_j["decks"].keys())
@@ -492,7 +490,6 @@ elif aba == "Jogadores":
 
                 st.divider()
 
-                # --- CADASTRAR NOVO DECK VIA CATÁLOGO ---
                 if "mostrar_form_deck" not in st.session_state:
                     st.session_state.mostrar_form_deck = False
 
@@ -505,7 +502,6 @@ elif aba == "Jogadores":
                         st.rerun()
                 else:
                     st.write("**Buscar Deck no Catálogo**")
-
                     catalogo = carregar_catalogo()
                     nomes_catalogo = [d["nome"] for d in catalogo]
 
@@ -517,22 +513,19 @@ elif aba == "Jogadores":
                     )
                     st.session_state.busca_precon = busca
 
-                    # Sugestões em tempo real
                     if busca.strip():
                         sugestoes = [n for n in nomes_catalogo if busca.strip().lower() in n.lower()]
-
                         if sugestoes:
                             st.markdown(f"*{len(sugestoes)} deck(s) encontrado(s):*")
-                            for sug in sugestoes[:10]:  # limita a 10 sugestões
+                            for sug in sugestoes[:10]:
                                 if st.button(sug, key=f"sug_{sug}"):
                                     precon_completo = buscar_precon_por_nome(sug)
                                     st.session_state.deck_precon_preview = precon_completo
                                     st.session_state.deck_preview_context = "cadastro"
                                     st.rerun()
                         else:
-                            st.info("Nenhum deck encontrado com esse nome. Tente outro termo.")
+                            st.info("Nenhum deck encontrado. Tente outro termo.")
 
-                    # Preview do deck selecionado no contexto de cadastro
                     if st.session_state.get("deck_preview_context") == "cadastro" and st.session_state.deck_precon_preview:
                         precon = st.session_state.deck_precon_preview
                         st.divider()
@@ -550,7 +543,6 @@ elif aba == "Jogadores":
                                 cmd_p = cmds[0] if len(cmds) > 0 else "Desconhecido"
                                 cmd_s = cmds[1] if len(cmds) > 1 else cmd_p
                                 cmd_a = cmds[2] if len(cmds) > 2 else ""
-
                                 if nome_deck not in dados_j["decks"]:
                                     novo_deck = {
                                         "comandante_primario": cmd_p,
@@ -587,13 +579,12 @@ elif aba == "Jogadores":
     else:
         st.info("Nenhum jogador cadastrado. Vá até a aba 'Cadastro' para começar.")
 
-# --- ABA: DECKS (ARSENAL GERAL DA LIGA) ---
+# ===================== DECKS =====================
 elif aba == "Decks":
     st.header("Arsenal Geral da LCPC")
 
-    # Monta lista de decks vinculados e quem os possui
     decks_escolhidos = []
-    nomes_decks_escolhidos = {}  # {nome_deck: [lista de donos]}
+    nomes_decks_escolhidos = {}
 
     for nome_jog, dados_jog in st.session_state.jogadores.items():
         exibicao_jog = obter_nome_exibicao(dados_jog, nome_jog)
@@ -609,7 +600,6 @@ elif aba == "Decks":
                 nomes_decks_escolhidos[nome_dk] = []
             nomes_decks_escolhidos[nome_dk].append(exibicao_jog)
 
-    # --- BLOCO 1: DECKS ESCOLHIDOS ---
     st.subheader("Decks Escolhidos")
     if decks_escolhidos:
         for dk in decks_escolhidos:
@@ -622,7 +612,6 @@ elif aba == "Decks":
                         st.session_state.deck_preview_context = f"escolhido_{dk['nome_real']}_{dk['Dono']}"
                     else:
                         st.warning("Lista não encontrada no catálogo.")
-
                 ctx_key = f"escolhido_{dk['nome_real']}_{dk['Dono']}"
                 if st.session_state.get("deck_preview_context") == ctx_key and st.session_state.deck_precon_preview:
                     precon = st.session_state.deck_precon_preview
@@ -637,17 +626,14 @@ elif aba == "Decks":
 
     st.divider()
 
-    # --- BLOCO 2: DECKS DISPONÍVEIS ---
     st.subheader("Decks Disponíveis no Catálogo")
     catalogo = carregar_catalogo()
 
     if catalogo:
         busca_catalogo = st.text_input("Filtrar catálogo:", placeholder="Digite para filtrar...", key="filtro_catalogo")
-
         catalogo_filtrado = catalogo
         if busca_catalogo.strip():
             catalogo_filtrado = [d for d in catalogo if busca_catalogo.strip().lower() in d["nome"].lower()]
-
         st.markdown(f"*{len(catalogo_filtrado)} deck(s) no catálogo*")
 
         for deck_cat in catalogo_filtrado:
@@ -655,10 +641,8 @@ elif aba == "Decks":
             cmds_cat = deck_cat.get("comandantes", [])
             donos = nomes_decks_escolhidos.get(nome_cat, [])
 
-            # Monta label com aviso se já foi escolhido
             if donos:
-                label_aviso = f"⚠️ Já escolhido por: {', '.join(donos)}"
-                label_expander = f"{nome_cat.upper()} — {label_aviso}"
+                label_expander = f"{nome_cat.upper()} — ⚠️ Já escolhido por: {', '.join(donos)}"
             else:
                 label_expander = f"{nome_cat.upper()}"
 
@@ -668,7 +652,6 @@ elif aba == "Decks":
                 st.markdown(f"*{deck_cat.get('set_nome', '')}*")
                 if donos:
                     st.warning(f"Este deck já foi escolhido por: **{', '.join(donos)}**. Você ainda pode vinculá-lo, mas considere escolher um diferente!")
-
                 if st.button("Ver Lista de Cartas", key=f"ver_cat_{nome_cat}"):
                     precon_full = buscar_precon_por_nome(nome_cat)
                     if precon_full:
@@ -676,7 +659,6 @@ elif aba == "Decks":
                         st.session_state.deck_preview_context = f"catalogo_{nome_cat}"
                     else:
                         st.warning("Lista não encontrada.")
-
                 ctx_cat = f"catalogo_{nome_cat}"
                 if st.session_state.get("deck_preview_context") == ctx_cat and st.session_state.deck_precon_preview:
                     precon = st.session_state.deck_precon_preview
@@ -689,7 +671,7 @@ elif aba == "Decks":
     else:
         st.info("Catálogo de precons não encontrado.")
 
-# --- ABA: NOVA PARTIDA ---
+# ===================== NOVA PARTIDA =====================
 elif aba == "Nova Partida":
     st.header("Registrar Nova Partida")
 
@@ -745,7 +727,6 @@ elif aba == "Nova Partida":
                         if dk_obj.get("comandante_adicional"):
                             opcoes_cmd.append(dk_obj["comandante_adicional"])
                         c2 = st.selectbox("Comandante em Campo (J2):", ["Selecione..."] + opcoes_cmd, key="dupla_c2")
-
             with col_d2:
                 st.markdown("### DUPLA B")
                 opcoes_j3 = ["Selecione..."] + [n for n in list(mapa_exib_para_real.keys()) if n not in [j1, j2]]
@@ -781,7 +762,6 @@ elif aba == "Nova Partida":
                     vencedor_dupla = st.radio("Qual dupla venceu o confronto?", ["DUPLA A", "DUPLA B"], key="rad_vencedor_dupla")
                     pts_vencedor = 400 if local_partida == "PRESENCIAL" else 200
                     pts_perdedor = 200 if local_partida == "PRESENCIAL" else 100
-
                     if st.button("Gravar Resultado das Duplas", key="btn_salvar_duplas"):
                         detalhes = [
                             {"Jogador": j1, "Deck": f"{d1} ({c1})", "Pontos": pts_vencedor if vencedor_dupla == "DUPLA A" else pts_perdedor, "Vencedor": vencedor_dupla == "DUPLA A"},
@@ -790,25 +770,18 @@ elif aba == "Nova Partida":
                             {"Jogador": j4, "Deck": f"{d4} ({c4})", "Pontos": pts_vencedor if vencedor_dupla == "DUPLA B" else pts_perdedor, "Vencedor": vencedor_dupla == "DUPLA B"}
                         ]
                         novo_id = salvar_partida(local_partida, modo_partida, 4, detalhes)
-                        nova_linha = pd.DataFrame([{
-                            "ID": novo_id, "Local": local_partida, "Modo": modo_partida,
-                            "Jogadores": 4, "Detalhes_Pontuacao": detalhes
-                        }])
+                        nova_linha = pd.DataFrame([{"ID": novo_id, "Local": local_partida, "Modo": modo_partida, "Jogadores": 4, "Detalhes_Pontuacao": detalhes}])
                         st.session_state.partidas = pd.concat([st.session_state.partidas, nova_linha], ignore_index=True)
-                        for key in ["dupla_j1", "dupla_d1", "dupla_c1", "dupla_j2", "dupla_d2", "dupla_c2",
-                                    "dupla_j3", "dupla_d3", "dupla_c3", "dupla_j4", "dupla_d4", "dupla_c4"]:
-                            if key in st.session_state:
-                                del st.session_state[key]
+                        for key in ["dupla_j1","dupla_d1","dupla_c1","dupla_j2","dupla_d2","dupla_c2","dupla_j3","dupla_d3","dupla_c3","dupla_j4","dupla_d4","dupla_c4"]:
+                            if key in st.session_state: del st.session_state[key]
                         st.session_state.mensagem_sucesso_partida = "Resultado de duplas gravado com sucesso!"
                         st.rerun()
                 else:
                     st.info("Aguardando a seleção de todos os integrantes, decks e comandantes para liberar a gravação...")
-
         else:
             selecionados_nomes = []
             colunas_jogadores = st.columns(qtd_jogadores)
             dados_confronto = []
-
             for i in range(qtd_jogadores):
                 with colunas_jogadores[i]:
                     st.markdown(f"#### Posição {i+1}")
@@ -816,7 +789,6 @@ elif aba == "Nova Partida":
                     jog_escolhido = st.selectbox(f"Jogador {i+1}:", opcoes_filtradas, key=f"solo_j_{i}")
                     deck_escolhido = "Selecione..."
                     cmd_escolhido = "Selecione..."
-
                     if jog_escolhido in mapa_exib_para_real:
                         selecionados_nomes.append(jog_escolhido)
                         real_key = mapa_exib_para_real[jog_escolhido]
@@ -827,60 +799,46 @@ elif aba == "Nova Partida":
                             if dk_obj.get("comandante_adicional"):
                                 opcoes_cmd.append(dk_obj["comandante_adicional"])
                             cmd_escolhido = st.selectbox(f"Comandante do Jogador {i+1}:", ["Selecione..."] + opcoes_cmd, key=f"solo_c_{i}")
-
                     dados_confronto.append({"Jogador": jog_escolhido, "Deck": deck_escolhido, "Comandante": cmd_escolhido})
 
             validos = [d for d in dados_confronto if d["Jogador"] in mapa_exib_para_real and d["Deck"] != "Selecione..." and d["Comandante"] != "Selecione..."]
-
             if len(validos) == qtd_jogadores:
                 st.divider()
                 st.subheader("Classificação Final da Partida Solo")
                 coloca_ordem = []
                 nomes_na_mesa = [d["Jogador"] for d in validos]
-
                 for pos in range(qtd_jogadores):
                     opcoes_pos = ["Selecione..."] + [n for n in nomes_na_mesa if n not in coloca_ordem]
                     txt_label = "1º Lugar (Campeão):" if pos == 0 else f"{pos+1}º Lugar:"
                     escolha_colocacao = st.selectbox(txt_label, opcoes_pos, key=f"colocacao_pos_{pos}")
                     if escolha_colocacao in nomes_na_mesa:
                         coloca_ordem.append(escolha_colocacao)
-
                 if len(coloca_ordem) == qtd_jogadores:
                     if st.button("Gravar Resultado Solo", key="btn_salvar_solo"):
                         tabela_pontos = {
-                            "PRESENCIAL": {5: [400, 300, 200, 100, 50], 4: [400, 300, 200, 100], 3: [200, 100, 50], 2: [100, 50]},
-                            "SPELLTABLE": {5: [300, 200, 100, 50, 25], 4: [200, 100, 50, 25], 3: [100, 50, 20], 2: [50, 25]}
+                            "PRESENCIAL": {5: [400,300,200,100,50], 4: [400,300,200,100], 3: [200,100,50], 2: [100,50]},
+                            "SPELLTABLE": {5: [300,200,100,50,25], 4: [200,100,50,25], 3: [100,50,20], 2: [50,25]}
                         }
                         detalhes_finais = []
                         for posicao_index, jog_nome in enumerate(coloca_ordem):
                             config_mesa = next(d for d in validos if d["Jogador"] == jog_nome)
                             pontos_obtidos = tabela_pontos[local_partida][qtd_jogadores][posicao_index]
                             nome_deck_completo = f"{config_mesa['Deck']} ({config_mesa['Comandante']})"
-                            detalhes_finais.append({
-                                "Jogador": jog_nome, "Deck": nome_deck_completo,
-                                "Pontos": pontos_obtidos, "Vencedor": posicao_index == 0
-                            })
-
+                            detalhes_finais.append({"Jogador": jog_nome, "Deck": nome_deck_completo, "Pontos": pontos_obtidos, "Vencedor": posicao_index == 0})
                         novo_id = salvar_partida(local_partida, modo_partida, qtd_jogadores, detalhes_finais)
-                        nova_linha = pd.DataFrame([{
-                            "ID": novo_id, "Local": local_partida, "Modo": modo_partida,
-                            "Jogadores": qtd_jogadores, "Detalhes_Pontuacao": detalhes_finais
-                        }])
+                        nova_linha = pd.DataFrame([{"ID": novo_id, "Local": local_partida, "Modo": modo_partida, "Jogadores": qtd_jogadores, "Detalhes_Pontuacao": detalhes_finais}])
                         st.session_state.partidas = pd.concat([st.session_state.partidas, nova_linha], ignore_index=True)
-
                         for i in range(qtd_jogadores):
                             for key in [f"solo_j_{i}", f"solo_d_{i}", f"solo_c_{i}"]:
-                                if key in st.session_state:
-                                    del st.session_state[key]
+                                if key in st.session_state: del st.session_state[key]
                         for pos in range(qtd_jogadores):
-                            if f"colocacao_pos_{pos}" in st.session_state:
-                                del st.session_state[f"colocacao_pos_{pos}"]
-
+                            if f"colocacao_pos_{pos}" in st.session_state: del st.session_state[f"colocacao_pos_{pos}"]
                         st.session_state.mensagem_sucesso_partida = "Resultado Solo gravado com sucesso!"
                         st.rerun()
             else:
                 st.info("Aguardando a seleção de todos os competidores, decks e comandantes ativos para liberar a classificação...")
 
+# ===================== RANKING =====================
 elif aba == "Ranking":
     st.header("Classificação e Estatísticas")
     if not st.session_state.partidas.empty:
@@ -891,10 +849,8 @@ elif aba == "Ranking":
         with c3: f_tipo = st.selectbox("Ranking por:", ["Competidor", "Deck", "Comandante"])
 
         df = st.session_state.partidas.copy()
-        if f_local != "TODOS":
-            df = df[df["Local"] == f_local]
-        if f_modo != "TODOS":
-            df = df[df["Modo"] == f_modo]
+        if f_local != "TODOS": df = df[df["Local"] == f_local]
+        if f_modo != "TODOS": df = df[df["Modo"] == f_modo]
 
         if not df.empty:
             dados_rank = []
@@ -908,28 +864,17 @@ elif aba == "Ranking":
                     else:
                         deck_nome = deck_raw
                         cmd_nome = "Desconhecido"
-                    dados_rank.append({
-                        "Competidor": nome_jogador,
-                        "Deck": deck_nome,
-                        "Comandante": cmd_nome,
-                        "Pontos": item.get("Pontos", 0)
-                    })
+                    dados_rank.append({"Competidor": nome_jogador, "Deck": deck_nome, "Comandante": cmd_nome, "Pontos": item.get("Pontos", 0)})
 
             df_rank = pd.DataFrame(dados_rank)
-            col_map = {"Competidor": "Competidor", "Deck": "Deck", "Comandante": "Comandante"}
-            coluna_escolhida = col_map[f_tipo]
+            coluna_escolhida = f_tipo
             df_final = df_rank.groupby(coluna_escolhida)["Pontos"].sum().reset_index().sort_values("Pontos", ascending=False)
 
             import plotly.express as px
             st.divider()
-            fig = px.bar(
-                df_final,
-                x=coluna_escolhida,
-                y="Pontos",
-                color="Pontos",
-                color_continuous_scale="Viridis",
-                title=f"Ranking: {f_tipo} (Modo: {f_modo} | Local: {f_local})"
-            )
+            fig = px.bar(df_final, x=coluna_escolhida, y="Pontos", color="Pontos",
+                         color_continuous_scale="Viridis",
+                         title=f"Ranking: {f_tipo} (Modo: {f_modo} | Local: {f_local})")
             fig.update_layout(xaxis={'categoryorder': 'total descending'})
             st.plotly_chart(fig, use_container_width=True)
             st.dataframe(df_final, use_container_width=True, hide_index=True)
@@ -961,9 +906,7 @@ elif aba == "Ranking":
                     with col_sim:
                         if st.button("Sim, excluir", type="primary", key=f"sim_del_{row['ID']}"):
                             excluir_partida_db(row["ID"])
-                            st.session_state.partidas = st.session_state.partidas[
-                                st.session_state.partidas["ID"] != row["ID"]
-                            ]
+                            st.session_state.partidas = st.session_state.partidas[st.session_state.partidas["ID"] != row["ID"]]
                             del st.session_state[f"confirmar_excluir_partida_{row['ID']}"]
                             st.rerun()
                     with col_nao:
