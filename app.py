@@ -448,6 +448,8 @@ elif aba == "Cadastro":
                     novo_apelido = st.text_input("Editar Apelido", value=dados_edit["apelido"], key="txt_edit_apelido")
                     novo_telefone = st.text_input("Editar Telefone", value=dados_edit["telefone"], key="txt_edit_telefone")
                     novo_email = st.text_input("Editar E-mail", value=dados_edit["email"], key="txt_edit_email")
+                    if is_admin:
+                        nova_senha = st.text_input("Nova Senha (deixe em branco para não alterar)", type="password", key="txt_edit_senha")
                     nova_foto = st.file_uploader("Atualizar Foto", type=["jpg", "png", "jpeg"], key="file_edit_foto")
 
                     if st.button("Salvar Alterações", key="btn_salvar_edit"):
@@ -463,6 +465,8 @@ elif aba == "Cadastro":
                             erros_edit.append("O campo E-mail não pode ficar vazio.")
                         elif not re.match(padrao_email, novo_email):
                             erros_edit.append("O formato do E-mail é inválido.")
+                        if is_admin and nova_senha and len(nova_senha.strip()) < 6:
+                            erros_edit.append("A nova senha deve ter pelo menos 6 caracteres.")
                         if erros_edit:
                             for err in erros_edit:
                                 st.error(err)
@@ -475,6 +479,15 @@ elif aba == "Cadastro":
                                 nova_url = upload_foto(jog_editar_real, nova_foto.read(), ext)
                                 st.session_state.jogadores[jog_editar_real]["foto_url"] = nova_url
                             salvar_jogador(jog_editar_real, st.session_state.jogadores[jog_editar_real])
+                            # Atualiza senha se admin preencheu
+                            if is_admin and nova_senha and nova_senha.strip():
+                                try:
+                                    usuarios = sb_admin.auth.admin.list_users()
+                                    user_match = next((u for u in usuarios if u.email == novo_email), None)
+                                    if user_match:
+                                        sb_admin.auth.admin.update_user_by_id(user_match.id, {"password": nova_senha.strip()})
+                                except Exception as e:
+                                    st.warning(f"Perfil salvo, mas erro ao atualizar senha: {e}")
                             st.session_state.mensagem_sucesso_perfil = f"Perfil de {jog_editar_real} atualizado com sucesso!"
                             st.rerun()
         else:
@@ -712,35 +725,11 @@ elif aba == "Decks":
                 nomes_decks_escolhidos[nome_dk] = []
             nomes_decks_escolhidos[nome_dk].append(exibicao_jog)
 
-    st.subheader("Decks Escolhidos")
-    if decks_escolhidos:
-        for dk in decks_escolhidos:
-            with st.expander(f"{dk['Deck']} — {dk['Dono']}"):
-                st.markdown(f"**Comandantes:** {dk['Comandantes']}")
-                if st.button("Ver Lista de Cartas", key=f"ver_lista_escolhido_{dk['Deck']}_{dk['Dono']}"):
-                    precon = buscar_precon_por_nome(dk["nome_real"])
-                    if precon:
-                        st.session_state.deck_precon_preview = precon
-                        st.session_state.deck_preview_context = f"escolhido_{dk['nome_real']}_{dk['Dono']}"
-                    else:
-                        st.warning("Lista não encontrada no catálogo.")
-                ctx_key = f"escolhido_{dk['nome_real']}_{dk['Dono']}"
-                if st.session_state.get("deck_preview_context") == ctx_key and st.session_state.deck_precon_preview:
-                    precon = st.session_state.deck_precon_preview
-                    st.divider()
-                    exibir_lista_cartas(precon.get("cartas", []))
-                    if st.button("Fechar Lista", key=f"fechar_{ctx_key}"):
-                        st.session_state.deck_precon_preview = None
-                        st.session_state.deck_preview_context = None
-                        st.rerun()
-    else:
-        st.info("Nenhum deck foi vinculado a jogadores ainda.")
-
-    st.divider()
-
     st.subheader("Decks Disponíveis no Catálogo")
     catalogo = carregar_catalogo()
     if catalogo:
+        # Ordena do mais novo para o mais antigo
+        catalogo = sorted(catalogo, key=lambda d: d.get("data_lancamento", ""), reverse=True)
         busca_catalogo = st.text_input("Filtrar catálogo:", placeholder="Digite para filtrar...", key="filtro_catalogo")
         catalogo_filtrado = catalogo
         if busca_catalogo.strip():
@@ -1004,11 +993,50 @@ elif aba == "Ranking":
                 st.table(df_detalhe[["Jogador", "Deck", "Pontos"]])
 
                 if is_admin:
-                    col_btn_excluir, _ = st.columns([1, 3])
+                    col_btn_editar, col_btn_excluir, _ = st.columns([1, 1, 2])
+                    with col_btn_editar:
+                        if st.button(f"Editar Comandantes", key=f"edit_{row['ID']}"):
+                            st.session_state[f"editando_partida_{row['ID']}"] = True
+                            st.rerun()
                     with col_btn_excluir:
                         if st.button(f"Excluir Partida #{row['ID']}", key=f"del_{row['ID']}"):
                             st.session_state[f"confirmar_excluir_partida_{row['ID']}"] = True
                             st.rerun()
+
+                    # Formulário de edição de comandantes
+                    if st.session_state.get(f"editando_partida_{row['ID']}", False):
+                        st.markdown("**Editar Comandantes da Partida:**")
+                        detalhes_editados = list(row["Detalhes_Pontuacao"])
+                        novos_comandantes = {}
+                        for idx, item in enumerate(detalhes_editados):
+                            deck_raw = item.get("Deck", "")
+                            deck_nome = deck_raw.split(" (")[0] if " (" in deck_raw else deck_raw
+                            cmd_atual = deck_raw.split(" (")[1].replace(")", "") if " (" in deck_raw else ""
+                            novo_cmd = st.text_input(
+                                f"{item['Jogador']} — {deck_nome}",
+                                value=cmd_atual,
+                                key=f"edit_cmd_{row['ID']}_{idx}"
+                            )
+                            novos_comandantes[idx] = novo_cmd
+
+                        col_salvar, col_cancelar, _ = st.columns([1, 1, 4])
+                        with col_salvar:
+                            if st.button("Salvar", type="primary", key=f"salvar_edit_{row['ID']}"):
+                                for idx, item in enumerate(detalhes_editados):
+                                    deck_raw = item.get("Deck", "")
+                                    deck_nome = deck_raw.split(" (")[0] if " (" in deck_raw else deck_raw
+                                    novo_cmd = novos_comandantes[idx].strip()
+                                    detalhes_editados[idx]["Deck"] = f"{deck_nome} ({novo_cmd})" if novo_cmd else deck_nome
+                                sb.table("partidas").update({"detalhes": detalhes_editados}).eq("id", int(row["ID"])).execute()
+                                st.session_state.dados_carregados = False
+                                del st.session_state[f"editando_partida_{row['ID']}"]
+                                st.success("Comandantes atualizados!")
+                                st.rerun()
+                        with col_cancelar:
+                            if st.button("Cancelar", key=f"cancelar_edit_{row['ID']}"):
+                                del st.session_state[f"editando_partida_{row['ID']}"]
+                                st.rerun()
+
                     if st.session_state.get(f"confirmar_excluir_partida_{row['ID']}", False):
                         st.warning(f"Tem certeza que deseja excluir a Partida #{row['ID']}?")
                         col_sim, col_nao, _ = st.columns([1, 1, 4])
