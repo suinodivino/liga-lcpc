@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import os
 import re
-import json
 from supabase import create_client
 from streamlit_option_menu import option_menu
 
@@ -15,10 +14,85 @@ def get_supabase():
     return create_client(st.secrets["supabase"]["url"], st.secrets["supabase"]["key"])
 
 sb = get_supabase()
+sb_admin = create_client(st.secrets["supabase"]["url"], st.secrets["supabase"]["service_key"])
 
-# --- FUNÇÕES DE FOTO (SUPABASE STORAGE) ---
+# --- AUTENTICAÇÃO ---
+def fazer_login(email, senha):
+    try:
+        resp = sb.auth.sign_in_with_password({"email": email, "password": senha})
+        return resp.user, None
+    except Exception as e:
+        return None, str(e)
+
+def fazer_logout():
+    try:
+        sb.auth.sign_out()
+    except:
+        pass
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.rerun()
+
+def verificar_admin(email):
+    try:
+        resultado = sb.table("perfis").select("is_admin").eq("email", email).execute().data
+        if resultado:
+            return resultado[0].get("is_admin", False)
+    except:
+        pass
+    return False
+
+# --- TELA DE LOGIN ---
+def tela_login():
+    _, col_center, _ = st.columns([1, 2, 1])
+    with col_center:
+        formatos_logo = ["logo.jpg", "logo.jpeg", "logo.png", "logo.PNG", "logo.JPG"]
+        for nome_arquivo in formatos_logo:
+            if os.path.exists(nome_arquivo):
+                st.image(nome_arquivo, width=300)
+                break
+
+        st.markdown("<h2 style='text-align:center;'>Liga Commander Pré-Con</h2>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align:center; color:#888;'>Faça login para acessar</p>", unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        with st.form("form_login"):
+            email = st.text_input("E-mail", placeholder="seu@email.com")
+            senha = st.text_input("Senha", type="password", placeholder="••••••••")
+            botao = st.form_submit_button("Entrar", use_container_width=True)
+
+            if botao:
+                if not email or not senha:
+                    st.error("Preencha e-mail e senha.")
+                else:
+                    user, erro = fazer_login(email.strip(), senha)
+                    if user:
+                        st.session_state.usuario_logado = user
+                        st.session_state.usuario_email = user.email
+                        st.session_state.is_admin = verificar_admin(user.email)
+                        st.session_state.dados_carregados = False
+                        st.rerun()
+                    else:
+                        st.error("E-mail ou senha incorretos.")
+
+# --- VERIFICAR SE ESTÁ LOGADO ---
+if "usuario_logado" not in st.session_state:
+    st.session_state.usuario_logado = None
+if "usuario_email" not in st.session_state:
+    st.session_state.usuario_email = None
+if "is_admin" not in st.session_state:
+    st.session_state.is_admin = False
+
+if not st.session_state.usuario_logado:
+    tela_login()
+    st.stop()
+
+# --- A PARTIR DAQUI O USUÁRIO ESTÁ LOGADO ---
+usuario_email = st.session_state.usuario_email
+is_admin = st.session_state.is_admin
+
+# --- FUNÇÕES DE FOTO ---
 def upload_foto(nome_jogador, foto_bytes, extensao="jpg"):
-    """Faz upload da foto para o Supabase Storage e retorna a URL pública."""
     try:
         caminho = f"{nome_jogador}.{extensao}"
         sb.storage.from_("fotos-jogadores").upload(
@@ -32,7 +106,6 @@ def upload_foto(nome_jogador, foto_bytes, extensao="jpg"):
         return ""
 
 def deletar_foto(nome_jogador):
-    """Remove a foto do jogador do Storage."""
     for ext in ["jpg", "jpeg", "png"]:
         try:
             sb.storage.from_("fotos-jogadores").remove([f"{nome_jogador}.{ext}"])
@@ -42,7 +115,6 @@ def deletar_foto(nome_jogador):
 # --- FUNÇÕES DE LEITURA ---
 def carregar_dados():
     jogadores = {}
-
     jogs = sb.table("jogadores").select("*").execute().data
     for j in jogs:
         jogadores[j["nome"]] = {
@@ -52,7 +124,6 @@ def carregar_dados():
             "foto_url": j.get("foto_url", "") or "",
             "decks": {}
         }
-
     decks = sb.table("decks").select("*").execute().data
     for d in decks:
         if d["jogador_nome"] in jogadores:
@@ -62,19 +133,14 @@ def carregar_dados():
                 "comandante_adicional": d["comandante_adicional"] or "",
                 "url": d["url"]
             }
-
     partidas_raw = sb.table("partidas").select("*").order("id").execute().data
     if partidas_raw:
         partidas = pd.DataFrame([{
-            "ID": p["id"],
-            "Local": p["local"],
-            "Modo": p["modo"],
-            "Jogadores": p["qtd_jogadores"],
-            "Detalhes_Pontuacao": p["detalhes"]
+            "ID": p["id"], "Local": p["local"], "Modo": p["modo"],
+            "Jogadores": p["qtd_jogadores"], "Detalhes_Pontuacao": p["detalhes"]
         } for p in partidas_raw])
     else:
         partidas = pd.DataFrame(columns=["ID", "Local", "Modo", "Jogadores", "Detalhes_Pontuacao"])
-
     return jogadores, partidas
 
 @st.cache_data(ttl=3600)
@@ -87,6 +153,24 @@ def buscar_precon_por_nome(nome_deck):
     return resultado[0] if resultado else None
 
 # --- FUNÇÕES DE ESCRITA ---
+def criar_conta_jogador(email, senha):
+    """Cria conta de autenticação para o jogador via Admin API."""
+    try:
+        resp = sb_admin.auth.admin.create_user({
+            "email": email,
+            "password": senha,
+            "email_confirm": True
+        })
+        user_id = resp.user.id
+        sb.table("perfis").upsert({
+            "id": user_id,
+            "email": email,
+            "is_admin": False
+        }).execute()
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
 def salvar_jogador(nome, dados):
     sb.table("jogadores").upsert({
         "nome": nome,
@@ -115,10 +199,8 @@ def excluir_jogador_db(nome):
 
 def salvar_partida(local, modo, qtd_jogadores, detalhes):
     result = sb.table("partidas").insert({
-        "local": local,
-        "modo": modo,
-        "qtd_jogadores": qtd_jogadores,
-        "detalhes": detalhes
+        "local": local, "modo": modo,
+        "qtd_jogadores": qtd_jogadores, "detalhes": detalhes
     }).execute()
     return result.data[0]["id"]
 
@@ -126,19 +208,16 @@ def excluir_partida_db(partida_id):
     sb.table("partidas").delete().eq("id", int(partida_id)).execute()
 
 # --- CARREGAMENTO INICIAL ---
-if "dados_carregados" not in st.session_state:
+if "dados_carregados" not in st.session_state or not st.session_state.dados_carregados:
     st.session_state.jogadores, st.session_state.partidas = carregar_dados()
     st.session_state.dados_carregados = True
 
 if "mensagem_sucesso_partida" not in st.session_state:
     st.session_state.mensagem_sucesso_partida = None
-
 if "mensagem_sucesso_perfil" not in st.session_state:
     st.session_state.mensagem_sucesso_perfil = None
-
 if "deck_precon_preview" not in st.session_state:
     st.session_state.deck_precon_preview = None
-
 if "busca_precon" not in st.session_state:
     st.session_state.busca_precon = ""
 
@@ -148,66 +227,39 @@ def obter_nome_exibicao(dados_jogador, nome_chave):
         return dados_jogador["apelido"]
     return nome_chave
 
-# --- FUNÇÃO: EXIBE LISTA DE CARTAS COM HOVER DE IMAGEM ---
+# --- FUNÇÃO: EXIBE LISTA DE CARTAS COM HOVER ---
 def exibir_lista_cartas(cartas):
     st.markdown("""
     <style>
-    .card-list-wrap {
-        column-count: 2;
-        column-gap: 24px;
-    }
-    @media (max-width: 768px) {
-        .card-list-wrap { column-count: 1; }
-    }
+    .card-list-wrap { column-count: 2; column-gap: 24px; }
+    @media (max-width: 768px) { .card-list-wrap { column-count: 1; } }
     .card-item {
-        position: relative;
-        display: block;
-        padding: 3px 8px;
-        margin: 2px 0;
-        border-radius: 4px;
-        font-size: 14px;
-        cursor: default;
-        break-inside: avoid;
+        position: relative; display: block; padding: 3px 8px;
+        margin: 2px 0; border-radius: 4px; font-size: 14px;
+        cursor: default; break-inside: avoid;
     }
     .card-item:hover { background-color: rgba(255,255,255,0.08); }
     .card-qty {
-        display: inline-block;
-        min-width: 24px;
-        text-align: center;
-        background: rgba(255,255,255,0.12);
-        border-radius: 3px;
-        margin-right: 6px;
-        font-size: 12px;
-        padding: 0 4px;
+        display: inline-block; min-width: 24px; text-align: center;
+        background: rgba(255,255,255,0.12); border-radius: 3px;
+        margin-right: 6px; font-size: 12px; padding: 0 4px;
     }
     .card-tooltip {
-        display: none;
-        position: fixed;
-        z-index: 99999;
-        pointer-events: none;
-        top: 50%;
-        transform: translateY(-50%);
-        left: 55%;
-        width: 280px;
-        border-radius: 10px;
+        display: none; position: fixed; z-index: 99999;
+        pointer-events: none; top: 50%; transform: translateY(-50%);
+        left: 55%; width: 280px; border-radius: 10px;
         box-shadow: 0 8px 32px rgba(0,0,0,0.7);
     }
     @media (max-width: 768px) {
         .card-tooltip {
-            left: 50%;
-            transform: translate(-50%, -50%);
-            top: 40%;
-            width: 200px;
+            left: 50%; transform: translate(-50%, -50%);
+            top: 40%; width: 200px;
         }
     }
-    .card-tooltip img {
-        width: 100%;
-        border-radius: 10px;
-    }
+    .card-tooltip img { width: 100%; border-radius: 10px; }
     .card-item:hover .card-tooltip { display: block; }
     </style>
     """, unsafe_allow_html=True)
-
     cartas_ordenadas = sorted(cartas, key=lambda c: c["nome"])
     html = '<div class="card-list-wrap">'
     for carta in cartas_ordenadas:
@@ -220,7 +272,7 @@ def exibir_lista_cartas(cartas):
     st.markdown(html, unsafe_allow_html=True)
 
 # --- BARRA LATERAL ---
-formatos_logo = ["logo.jpg", "logo.jpeg", "logo.png", "logo.PNG", "logo.JPG", "logo.png.jpg"]
+formatos_logo = ["logo.jpg", "logo.jpeg", "logo.png", "logo.PNG", "logo.JPG"]
 logo_encontrada = None
 for nome_arquivo in formatos_logo:
     if os.path.exists(nome_arquivo):
@@ -229,6 +281,14 @@ for nome_arquivo in formatos_logo:
 
 if logo_encontrada:
     st.sidebar.image(logo_encontrada, use_container_width=True)
+
+# Info do usuário logado na sidebar
+st.sidebar.markdown("---")
+st.sidebar.markdown(f"👤 **{usuario_email}**")
+if is_admin:
+    st.sidebar.markdown("🔑 *Administrador*")
+if st.sidebar.button("Sair", use_container_width=True):
+    fazer_logout()
 
 with st.sidebar:
     aba = option_menu(
@@ -283,116 +343,158 @@ Um abraço,<br>
 # ===================== CADASTRO =====================
 elif aba == "Cadastro":
     st.header("Gerenciamento de Perfis")
-    tab_criar, tab_editar, tab_excluir = st.tabs(["Novo Jogador", "Editar Perfil", "Excluir Jogador"])
 
-    with tab_criar:
-        st.subheader("Cadastrar Novo Jogador")
-        with st.form("form_cadastro_jogador", clear_on_submit=True):
-            st.markdown("Nome <span style='color:red;'>*</span>", unsafe_allow_html=True)
-            nome = st.text_input("", label_visibility="collapsed", key="txt_cad_nome_real")
-            st.markdown("Apelido")
-            apelido = st.text_input("", label_visibility="collapsed", key="txt_cad_apelido_real")
-            st.markdown("Telefone <span style='color:red;'>*</span>", unsafe_allow_html=True)
-            telefone = st.text_input("", label_visibility="collapsed", key="txt_cad_telefone_real")
-            st.markdown("E-mail <span style='color:red;'>*</span>", unsafe_allow_html=True)
-            email = st.text_input("", label_visibility="collapsed", key="txt_cad_email_real")
-            st.markdown("Foto do Jogador")
-            foto = st.file_uploader("", type=["jpg", "png", "jpeg"], label_visibility="collapsed", key="file_cad_foto_real")
-            st.markdown("<span style='color:red;'>* CAMPOS OBRIGATÓRIOS</span>", unsafe_allow_html=True)
-            botao_salvar = st.form_submit_button("Salvar Cadastro")
+    # Abas visíveis dependem do nível de acesso
+    if is_admin:
+        tab_criar, tab_editar, tab_excluir = st.tabs(["Novo Jogador", "Editar Perfil", "Excluir Jogador"])
+    else:
+        tab_editar, = st.tabs(["Editar Perfil"])
+        tab_criar = None
+        tab_excluir = None
 
-            if botao_salvar:
-                nome = nome.strip()
-                telefone = telefone.strip()
-                email = email.strip()
-                erros = []
-                if not nome or not telefone or not email:
-                    erros.append("Preencha todos os campos obrigatórios (Nome, Telefone e E-mail).")
-                if nome and not re.match(r"^[A-Za-zÀ-ÖØ-öø-ÿ\s]+$", nome):
-                    erros.append("O campo Nome não pode conter caracteres especiais ou números.")
-                if telefone and not telefone.isdigit():
-                    erros.append("O campo Telefone deve conter apenas números.")
-                if email:
-                    padrao_email = r"^[\w\.-]+@[\w\.-]+\.(com|com\.br)$"
-                    if not re.match(padrao_email, email):
-                        erros.append("O formato do E-mail é inválido.")
-                if erros:
-                    for erro in erros:
-                        st.error(erro)
-                else:
-                    if nome not in st.session_state.jogadores:
-                        foto_url = ""
-                        if foto:
-                            ext = foto.name.split(".")[-1].lower()
-                            foto_url = upload_foto(nome, foto.read(), ext)
-                        novo_jogador = {
-                            "apelido": apelido, "telefone": telefone,
-                            "email": email, "foto_url": foto_url, "decks": {}
-                        }
-                        st.session_state.jogadores[nome] = novo_jogador
-                        salvar_jogador(nome, novo_jogador)
-                        st.success(f"Jogador {apelido if apelido else nome} cadastrado com sucesso!")
+    if is_admin and tab_criar:
+        with tab_criar:
+            st.subheader("Cadastrar Novo Jogador")
+            with st.form("form_cadastro_jogador", clear_on_submit=True):
+                st.markdown("Nome <span style='color:red;'>*</span>", unsafe_allow_html=True)
+                nome = st.text_input("", label_visibility="collapsed", key="txt_cad_nome_real")
+                st.markdown("Apelido")
+                apelido = st.text_input("", label_visibility="collapsed", key="txt_cad_apelido_real")
+                st.markdown("Telefone <span style='color:red;'>*</span>", unsafe_allow_html=True)
+                telefone = st.text_input("", label_visibility="collapsed", key="txt_cad_telefone_real")
+                st.markdown("E-mail <span style='color:red;'>*</span>", unsafe_allow_html=True)
+                email = st.text_input("", label_visibility="collapsed", key="txt_cad_email_real")
+                st.markdown("Senha de Acesso <span style='color:red;'>*</span>", unsafe_allow_html=True)
+                senha = st.text_input("", type="password", label_visibility="collapsed", key="txt_cad_senha_real")
+                st.markdown("Foto do Jogador")
+                foto = st.file_uploader("", type=["jpg", "png", "jpeg"], label_visibility="collapsed", key="file_cad_foto_real")
+                st.markdown("<span style='color:red;'>* CAMPOS OBRIGATÓRIOS</span>", unsafe_allow_html=True)
+                botao_salvar = st.form_submit_button("Salvar Cadastro")
+
+                if botao_salvar:
+                    nome = nome.strip()
+                    telefone = telefone.strip()
+                    email = email.strip()
+                    senha = senha.strip()
+                    erros = []
+                    if not nome or not telefone or not email or not senha:
+                        erros.append("Preencha todos os campos obrigatórios.")
+                    if nome and not re.match(r"^[A-Za-zÀ-ÖØ-öø-ÿ\s]+$", nome):
+                        erros.append("O campo Nome não pode conter caracteres especiais ou números.")
+                    if telefone and not telefone.isdigit():
+                        erros.append("O campo Telefone deve conter apenas números.")
+                    if email:
+                        padrao_email = r"^[\w\.-]+@[\w\.-]+\.(com|com\.br)$"
+                        if not re.match(padrao_email, email):
+                            erros.append("O formato do E-mail é inválido.")
+                    if senha and len(senha) < 6:
+                        erros.append("A senha deve ter pelo menos 6 caracteres.")
+                    if erros:
+                        for erro in erros:
+                            st.error(erro)
                     else:
-                        st.warning("Este jogador já está cadastrado!")
+                        if nome not in st.session_state.jogadores:
+                            # Cria conta de autenticação
+                            ok, erro_auth = criar_conta_jogador(email, senha)
+                            if not ok:
+                                st.error(f"Erro ao criar conta de acesso: {erro_auth}")
+                            else:
+                                foto_url = ""
+                                if foto:
+                                    ext = foto.name.split(".")[-1].lower()
+                                    foto_url = upload_foto(nome, foto.read(), ext)
+                                novo_jogador = {
+                                    "apelido": apelido, "telefone": telefone,
+                                    "email": email, "foto_url": foto_url, "decks": {}
+                                }
+                                st.session_state.jogadores[nome] = novo_jogador
+                                salvar_jogador(nome, novo_jogador)
+                                st.success(f"Jogador {apelido if apelido else nome} cadastrado com sucesso!")
+                        else:
+                            st.warning("Este jogador já está cadastrado!")
 
     with tab_editar:
         st.subheader("Editar Perfil Existente")
         if st.session_state.get("mensagem_sucesso_perfil"):
             st.success(st.session_state.mensagem_sucesso_perfil)
             st.session_state.mensagem_sucesso_perfil = None
+
         if st.session_state.jogadores:
-            opcoes_edicao = ["Selecione um jogador..."] + list(st.session_state.jogadores.keys())
-            jog_editar_real = st.selectbox("Escolha o perfil que deseja alterar:", opcoes_edicao, key="sel_edit_jog")
-            if jog_editar_real != "Selecione um jogador...":
-                dados_edit = st.session_state.jogadores[jog_editar_real]
-                novo_apelido = st.text_input("Editar Apelido", value=dados_edit["apelido"], key="txt_edit_apelido")
-                novo_telefone = st.text_input("Editar Telefone", value=dados_edit["telefone"], key="txt_edit_telefone")
-                novo_email = st.text_input("Editar E-mail", value=dados_edit["email"], key="txt_edit_email")
-                nova_foto = st.file_uploader("Atualizar Foto", type=["jpg", "png", "jpeg"], key="file_edit_foto")
-                if st.button("Salvar Alterações", key="btn_salvar_edit"):
-                    novo_telefone = novo_telefone.strip()
-                    novo_email = novo_email.strip()
-                    erros_edit = []
-                    if not novo_telefone:
-                        erros_edit.append("O campo Telefone não pode ficar vazio.")
-                    elif not novo_telefone.isdigit():
-                        erros_edit.append("O campo Telefone deve conter apenas números.")
-                    padrao_email = r"^[\w\.-]+@[\w\.-]+\.(com|com\.br)$"
-                    if not novo_email:
-                        erros_edit.append("O campo E-mail não pode ficar vazio.")
-                    elif not re.match(padrao_email, novo_email):
-                        erros_edit.append("O formato do E-mail é inválido.")
-                    if erros_edit:
-                        for err in erros_edit:
-                            st.error(err)
-                    else:
-                        st.session_state.jogadores[jog_editar_real]["apelido"] = novo_apelido
-                        st.session_state.jogadores[jog_editar_real]["telefone"] = novo_telefone
-                        st.session_state.jogadores[jog_editar_real]["email"] = novo_email
-                        if nova_foto:
-                            ext = nova_foto.name.split(".")[-1].lower()
-                            nova_url = upload_foto(jog_editar_real, nova_foto.read(), ext)
-                            st.session_state.jogadores[jog_editar_real]["foto_url"] = nova_url
-                        salvar_jogador(jog_editar_real, st.session_state.jogadores[jog_editar_real])
-                        st.session_state.mensagem_sucesso_perfil = f"Perfil de {jog_editar_real} atualizado com sucesso!"
-                        st.rerun()
+            # Admin vê todos; jogador comum vê só o próprio
+            if is_admin:
+                opcoes_edicao = ["Selecione um jogador..."] + list(st.session_state.jogadores.keys())
+            else:
+                jogador_proprio = next(
+                    (n for n, d in st.session_state.jogadores.items() if d["email"] == usuario_email),
+                    None
+                )
+                if jogador_proprio:
+                    opcoes_edicao = [jogador_proprio]
+                else:
+                    st.info("Seu perfil de jogador ainda não foi cadastrado pelo administrador.")
+                    opcoes_edicao = []
+
+            if opcoes_edicao:
+                if is_admin:
+                    jog_editar_real = st.selectbox("Escolha o perfil que deseja alterar:", opcoes_edicao, key="sel_edit_jog")
+                else:
+                    jog_editar_real = opcoes_edicao[0]
+                    st.markdown(f"**Editando seu perfil:** {jog_editar_real}")
+
+                if is_admin and jog_editar_real == "Selecione um jogador...":
+                    pass
+                else:
+                    dados_edit = st.session_state.jogadores[jog_editar_real]
+                    novo_apelido = st.text_input("Editar Apelido", value=dados_edit["apelido"], key="txt_edit_apelido")
+                    novo_telefone = st.text_input("Editar Telefone", value=dados_edit["telefone"], key="txt_edit_telefone")
+                    novo_email = st.text_input("Editar E-mail", value=dados_edit["email"], key="txt_edit_email")
+                    nova_foto = st.file_uploader("Atualizar Foto", type=["jpg", "png", "jpeg"], key="file_edit_foto")
+
+                    if st.button("Salvar Alterações", key="btn_salvar_edit"):
+                        novo_telefone = novo_telefone.strip()
+                        novo_email = novo_email.strip()
+                        erros_edit = []
+                        if not novo_telefone:
+                            erros_edit.append("O campo Telefone não pode ficar vazio.")
+                        elif not novo_telefone.isdigit():
+                            erros_edit.append("O campo Telefone deve conter apenas números.")
+                        padrao_email = r"^[\w\.-]+@[\w\.-]+\.(com|com\.br)$"
+                        if not novo_email:
+                            erros_edit.append("O campo E-mail não pode ficar vazio.")
+                        elif not re.match(padrao_email, novo_email):
+                            erros_edit.append("O formato do E-mail é inválido.")
+                        if erros_edit:
+                            for err in erros_edit:
+                                st.error(err)
+                        else:
+                            st.session_state.jogadores[jog_editar_real]["apelido"] = novo_apelido
+                            st.session_state.jogadores[jog_editar_real]["telefone"] = novo_telefone
+                            st.session_state.jogadores[jog_editar_real]["email"] = novo_email
+                            if nova_foto:
+                                ext = nova_foto.name.split(".")[-1].lower()
+                                nova_url = upload_foto(jog_editar_real, nova_foto.read(), ext)
+                                st.session_state.jogadores[jog_editar_real]["foto_url"] = nova_url
+                            salvar_jogador(jog_editar_real, st.session_state.jogadores[jog_editar_real])
+                            st.session_state.mensagem_sucesso_perfil = f"Perfil de {jog_editar_real} atualizado com sucesso!"
+                            st.rerun()
         else:
             st.info("Nenhum jogador cadastrado para editar.")
 
-    with tab_excluir:
-        st.subheader("Remover Jogador da Liga")
-        if st.session_state.jogadores:
-            opcoes_exclusao = ["Selecione um jogador..."] + list(st.session_state.jogadores.keys())
-            jog_excluir = st.selectbox("Escolha o perfil que deseja remover:", opcoes_exclusao, key="sel_excluir_jog")
-            if jog_excluir != "Selecione um jogador...":
-                st.warning(f"Atenção: Excluir {jog_excluir} removerá o perfil e seus decks.")
-                if st.button("Confirmar Exclusão do Jogador", type="primary", key="btn_conf_excluir_jog"):
-                    excluir_jogador_db(jog_excluir)
-                    del st.session_state.jogadores[jog_excluir]
-                    st.success("Jogador removido com sucesso!")
-                    st.rerun()
-        else:
-            st.info("Nenhum jogador cadastrado.")
+    if is_admin and tab_excluir:
+        with tab_excluir:
+            st.subheader("Remover Jogador da Liga")
+            if st.session_state.jogadores:
+                opcoes_exclusao = ["Selecione um jogador..."] + list(st.session_state.jogadores.keys())
+                jog_excluir = st.selectbox("Escolha o perfil que deseja remover:", opcoes_exclusao, key="sel_excluir_jog")
+                if jog_excluir != "Selecione um jogador...":
+                    st.warning(f"Atenção: Excluir {jog_excluir} removerá o perfil e seus decks.")
+                    if st.button("Confirmar Exclusão do Jogador", type="primary", key="btn_conf_excluir_jog"):
+                        excluir_jogador_db(jog_excluir)
+                        del st.session_state.jogadores[jog_excluir]
+                        st.success("Jogador removido com sucesso!")
+                        st.rerun()
+            else:
+                st.info("Nenhum jogador cadastrado.")
 
 # ===================== JOGADORES =====================
 elif aba == "Jogadores":
@@ -407,6 +509,9 @@ elif aba == "Jogadores":
         if jogador_sel_exibicao != "Selecione um jogador...":
             jogador_real = opcoes_selectbox[jogador_sel_exibicao]
             dados_j = st.session_state.jogadores[jogador_real]
+
+            # Verifica se o jogador logado pode editar este perfil
+            pode_editar = is_admin or (dados_j["email"] == usuario_email)
 
             col1, col2 = st.columns([1, 2])
             with col1:
@@ -455,133 +560,134 @@ elif aba == "Jogadores":
                                 st.session_state.deck_preview_context = None
                                 st.rerun()
 
-                    st.markdown("<br>", unsafe_allow_html=True)
+                    # Edição e exclusão de deck apenas para quem pode editar
+                    if pode_editar:
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        tab_gerenciar_existentes, tab_remover_existente = st.tabs(["Editar Deck", "Excluir Deck"])
 
-                    # PONTO 3 CORRIGIDO: removido campo Link do Moxfield da edição
-                    tab_gerenciar_existentes, tab_remover_existente = st.tabs(["Editar Deck", "Excluir Deck"])
+                        with tab_gerenciar_existentes:
+                            opcoes_edit_dk = ["Selecione um deck para editar..."] + list(dados_j["decks"].keys())
+                            dk_escolhido_edit = st.selectbox("Qual deck deseja alterar?", opcoes_edit_dk, key="sel_dk_gerenciamento_edit")
+                            if dk_escolhido_edit != "Selecione um deck para editar...":
+                                dados_dk_edit = dados_j["decks"][dk_escolhido_edit]
+                                edit_cmd_p = st.text_input("Comandante Primário*", value=dados_dk_edit["comandante_primario"], key="txt_edit_cmd_p")
+                                edit_cmd_s = st.text_input("Comandante Secundário*", value=dados_dk_edit["comandante_secundario"], key="txt_edit_cmd_s")
+                                edit_cmd_a = st.text_input("Comandante Adicional (Opcional)", value=dados_dk_edit.get("comandante_adicional", ""), key="txt_edit_cmd_a")
+                                if st.button("Salvar Alterações do Deck", key="btn_confirmar_alteracoes_deck"):
+                                    if edit_cmd_p and edit_cmd_s:
+                                        dados_j["decks"][dk_escolhido_edit] = {
+                                            "comandante_primario": edit_cmd_p.strip(),
+                                            "comandante_secundario": edit_cmd_s.strip(),
+                                            "comandante_adicional": edit_cmd_a.strip() if edit_cmd_a else "",
+                                            "url": dados_dk_edit.get("url", "")
+                                        }
+                                        salvar_deck(jogador_real, dk_escolhido_edit, dados_j["decks"][dk_escolhido_edit])
+                                        st.success(f"Deck '{dk_escolhido_edit}' atualizado!")
+                                        st.rerun()
+                                    else:
+                                        st.error("Comandante Primário e Secundário são obrigatórios.")
 
-                    with tab_gerenciar_existentes:
-                        opcoes_edit_dk = ["Selecione um deck para editar..."] + list(dados_j["decks"].keys())
-                        dk_escolhido_edit = st.selectbox("Qual deck deseja alterar?", opcoes_edit_dk, key="sel_dk_gerenciamento_edit")
-                        if dk_escolhido_edit != "Selecione um deck para editar...":
-                            dados_dk_edit = dados_j["decks"][dk_escolhido_edit]
-                            edit_cmd_p = st.text_input("Comandante Primário*", value=dados_dk_edit["comandante_primario"], key="txt_edit_cmd_p")
-                            edit_cmd_s = st.text_input("Comandante Secundário*", value=dados_dk_edit["comandante_secundario"], key="txt_edit_cmd_s")
-                            edit_cmd_a = st.text_input("Comandante Adicional (Opcional)", value=dados_dk_edit.get("comandante_adicional", ""), key="txt_edit_cmd_a")
-                            if st.button("Salvar Alterações do Deck", key="btn_confirmar_alteracoes_deck"):
-                                if edit_cmd_p and edit_cmd_s:
-                                    dados_j["decks"][dk_escolhido_edit] = {
-                                        "comandante_primario": edit_cmd_p.strip(),
-                                        "comandante_secundario": edit_cmd_s.strip(),
-                                        "comandante_adicional": edit_cmd_a.strip() if edit_cmd_a else "",
-                                        "url": dados_dk_edit.get("url", "")
-                                    }
-                                    salvar_deck(jogador_real, dk_escolhido_edit, dados_j["decks"][dk_escolhido_edit])
-                                    st.success(f"Deck '{dk_escolhido_edit}' atualizado!")
+                        with tab_remover_existente:
+                            opcoes_deck = ["Selecione um deck..."] + list(dados_j["decks"].keys())
+                            deck_excluir = st.selectbox("Escolha o deck para remover:", opcoes_deck, key="sel_dk_excluir_real")
+                            if deck_excluir != "Selecione um deck...":
+                                if st.button("Remover Este Deck", type="primary", key="btn_remover_dk_real"):
+                                    excluir_deck_db(jogador_real, deck_excluir)
+                                    del dados_j["decks"][deck_excluir]
+                                    st.success(f"Deck '{deck_excluir}' removido com sucesso!")
                                     st.rerun()
-                                else:
-                                    st.error("Comandante Primário e Secundário são obrigatórios.")
-
-                    with tab_remover_existente:
-                        opcoes_deck = ["Selecione um deck..."] + list(dados_j["decks"].keys())
-                        deck_excluir = st.selectbox("Escolha o deck para remover:", opcoes_deck, key="sel_dk_excluir_real")
-                        if deck_excluir != "Selecione um deck...":
-                            if st.button("Remover Este Deck", type="primary", key="btn_remover_dk_real"):
-                                excluir_deck_db(jogador_real, deck_excluir)
-                                del dados_j["decks"][deck_excluir]
-                                st.success(f"Deck '{deck_excluir}' removido com sucesso!")
-                                st.rerun()
                 else:
                     st.info("Sem decks vinculados no momento.")
 
-                st.divider()
+                # Cadastrar novo deck apenas para quem pode editar
+                if pode_editar:
+                    st.divider()
+                    if "mostrar_form_deck" not in st.session_state:
+                        st.session_state.mostrar_form_deck = False
 
-                if "mostrar_form_deck" not in st.session_state:
-                    st.session_state.mostrar_form_deck = False
+                    if not st.session_state.mostrar_form_deck:
+                        if st.button("CADASTRAR NOVO DECK"):
+                            st.session_state.mostrar_form_deck = True
+                            st.session_state.deck_precon_preview = None
+                            st.session_state.deck_preview_context = None
+                            st.session_state.busca_precon = ""
+                            st.rerun()
+                    else:
+                        st.write("**Buscar Deck no Catálogo**")
+                        catalogo = carregar_catalogo()
+                        nomes_catalogo = [d["nome"] for d in catalogo]
 
-                if not st.session_state.mostrar_form_deck:
-                    if st.button("CADASTRAR NOVO DECK"):
-                        st.session_state.mostrar_form_deck = True
-                        st.session_state.deck_precon_preview = None
-                        st.session_state.deck_preview_context = None
-                        st.session_state.busca_precon = ""
-                        st.rerun()
-                else:
-                    st.write("**Buscar Deck no Catálogo**")
-                    catalogo = carregar_catalogo()
-                    nomes_catalogo = [d["nome"] for d in catalogo]
+                        busca = st.text_input(
+                            "Digite o nome do deck (ou parte dele):",
+                            value=st.session_state.busca_precon,
+                            key="txt_busca_precon",
+                            placeholder="Ex: Goblin, Dragon, Wilhelt..."
+                        )
+                        st.session_state.busca_precon = busca
 
-                    busca = st.text_input(
-                        "Digite o nome do deck (ou parte dele):",
-                        value=st.session_state.busca_precon,
-                        key="txt_busca_precon",
-                        placeholder="Ex: Goblin, Dragon, Wilhelt..."
-                    )
-                    st.session_state.busca_precon = busca
+                        if busca.strip():
+                            sugestoes = [n for n in nomes_catalogo if busca.strip().lower() in n.lower()]
+                            if sugestoes:
+                                st.markdown(f"*{len(sugestoes)} deck(s) encontrado(s):*")
+                                for sug in sugestoes[:10]:
+                                    if st.button(sug, key=f"sug_{sug}"):
+                                        precon_completo = buscar_precon_por_nome(sug)
+                                        st.session_state.deck_precon_preview = precon_completo
+                                        st.session_state.deck_preview_context = "cadastro"
+                                        st.rerun()
+                            else:
+                                st.info("Nenhum deck encontrado. Tente outro termo.")
 
-                    if busca.strip():
-                        sugestoes = [n for n in nomes_catalogo if busca.strip().lower() in n.lower()]
-                        if sugestoes:
-                            st.markdown(f"*{len(sugestoes)} deck(s) encontrado(s):*")
-                            for sug in sugestoes[:10]:
-                                if st.button(sug, key=f"sug_{sug}"):
-                                    precon_completo = buscar_precon_por_nome(sug)
-                                    st.session_state.deck_precon_preview = precon_completo
-                                    st.session_state.deck_preview_context = "cadastro"
-                                    st.rerun()
-                        else:
-                            st.info("Nenhum deck encontrado. Tente outro termo.")
+                        if st.session_state.get("deck_preview_context") == "cadastro" and st.session_state.deck_precon_preview:
+                            precon = st.session_state.deck_precon_preview
+                            st.divider()
+                            st.markdown(f"### {precon['nome']}")
+                            cmds = precon.get("comandantes", [])
+                            if cmds:
+                                st.markdown(f"**Comandantes:** {' | '.join(cmds)}")
+                            st.markdown(f"*{precon.get('set_nome', '')}*")
 
-                    if st.session_state.get("deck_preview_context") == "cadastro" and st.session_state.deck_precon_preview:
-                        precon = st.session_state.deck_precon_preview
-                        st.divider()
-                        st.markdown(f"### {precon['nome']}")
-                        cmds = precon.get("comandantes", [])
-                        if cmds:
-                            st.markdown(f"**Comandantes:** {' | '.join(cmds)}")
-                        st.markdown(f"*{precon.get('set_nome', '')}*")
-
-                        col_vincular, col_fechar = st.columns([1, 1])
-                        with col_vincular:
-                            if st.button("✔ Vincular este Deck ao Perfil", type="primary", key="btn_vincular_precon"):
-                                nome_deck = precon["nome"]
-                                cmds = precon.get("comandantes", [])
-                                cmd_p = cmds[0] if len(cmds) > 0 else "Desconhecido"
-                                cmd_s = cmds[1] if len(cmds) > 1 else cmd_p
-                                cmd_a = cmds[2] if len(cmds) > 2 else ""
-                                if nome_deck not in dados_j["decks"]:
-                                    novo_deck = {
-                                        "comandante_primario": cmd_p,
-                                        "comandante_secundario": cmd_s,
-                                        "comandante_adicional": cmd_a,
-                                        "url": ""
-                                    }
-                                    dados_j["decks"][nome_deck] = novo_deck
-                                    salvar_deck(jogador_real, nome_deck, novo_deck)
+                            col_vincular, col_fechar = st.columns([1, 1])
+                            with col_vincular:
+                                if st.button("✔ Vincular este Deck ao Perfil", type="primary", key="btn_vincular_precon"):
+                                    nome_deck = precon["nome"]
+                                    cmds = precon.get("comandantes", [])
+                                    cmd_p = cmds[0] if len(cmds) > 0 else "Desconhecido"
+                                    cmd_s = cmds[1] if len(cmds) > 1 else cmd_p
+                                    cmd_a = cmds[2] if len(cmds) > 2 else ""
+                                    if nome_deck not in dados_j["decks"]:
+                                        novo_deck = {
+                                            "comandante_primario": cmd_p,
+                                            "comandante_secundario": cmd_s,
+                                            "comandante_adicional": cmd_a,
+                                            "url": ""
+                                        }
+                                        dados_j["decks"][nome_deck] = novo_deck
+                                        salvar_deck(jogador_real, nome_deck, novo_deck)
+                                        st.session_state.deck_precon_preview = None
+                                        st.session_state.deck_preview_context = None
+                                        st.session_state.mostrar_form_deck = False
+                                        st.session_state.busca_precon = ""
+                                        st.success(f"Deck '{nome_deck}' vinculado com sucesso!")
+                                        st.rerun()
+                                    else:
+                                        st.warning("Este deck já está vinculado ao seu perfil.")
+                            with col_fechar:
+                                if st.button("✖ Escolher outro deck", key="btn_cancelar_preview"):
                                     st.session_state.deck_precon_preview = None
                                     st.session_state.deck_preview_context = None
-                                    st.session_state.mostrar_form_deck = False
-                                    st.session_state.busca_precon = ""
-                                    st.success(f"Deck '{nome_deck}' vinculado com sucesso!")
                                     st.rerun()
-                                else:
-                                    st.warning("Este deck já está vinculado ao seu perfil.")
-                        with col_fechar:
-                            if st.button("✖ Escolher outro deck", key="btn_cancelar_preview"):
-                                st.session_state.deck_precon_preview = None
-                                st.session_state.deck_preview_context = None
-                                st.rerun()
 
-                        st.divider()
-                        st.markdown("**Lista de Cartas:**")
-                        exibir_lista_cartas(precon.get("cartas", []))
+                            st.divider()
+                            st.markdown("**Lista de Cartas:**")
+                            exibir_lista_cartas(precon.get("cartas", []))
 
-                    if st.button("Cancelar", key="btn_cancelar_deck"):
-                        st.session_state.mostrar_form_deck = False
-                        st.session_state.deck_precon_preview = None
-                        st.session_state.deck_preview_context = None
-                        st.session_state.busca_precon = ""
-                        st.rerun()
+                        if st.button("Cancelar", key="btn_cancelar_deck"):
+                            st.session_state.mostrar_form_deck = False
+                            st.session_state.deck_precon_preview = None
+                            st.session_state.deck_preview_context = None
+                            st.session_state.busca_precon = ""
+                            st.rerun()
     else:
         st.info("Nenhum jogador cadastrado. Vá até a aba 'Cadastro' para começar.")
 
@@ -634,7 +740,6 @@ elif aba == "Decks":
 
     st.subheader("Decks Disponíveis no Catálogo")
     catalogo = carregar_catalogo()
-
     if catalogo:
         busca_catalogo = st.text_input("Filtrar catálogo:", placeholder="Digite para filtrar...", key="filtro_catalogo")
         catalogo_filtrado = catalogo
@@ -646,12 +751,10 @@ elif aba == "Decks":
             nome_cat = deck_cat["nome"]
             cmds_cat = deck_cat.get("comandantes", [])
             donos = nomes_decks_escolhidos.get(nome_cat, [])
-
             if donos:
                 label_expander = f"{nome_cat.upper()} — ⚠️ Já escolhido por: {', '.join(donos)}"
             else:
                 label_expander = f"{nome_cat.upper()}"
-
             with st.expander(label_expander):
                 if cmds_cat:
                     st.markdown(f"**Comandantes:** {' | '.join(cmds_cat)}")
@@ -822,8 +925,8 @@ elif aba == "Nova Partida":
                 if len(coloca_ordem) == qtd_jogadores:
                     if st.button("Gravar Resultado Solo", key="btn_salvar_solo"):
                         tabela_pontos = {
-                            "PRESENCIAL": {5: [400,300,200,100,50], 4: [400,300,200,100], 3: [200,100,50], 2: [100,50]},
-                            "SPELLTABLE": {5: [300,200,100,50,25], 4: [200,100,50,25], 3: [100,50,20], 2: [50,25]}
+                            "PRESENCIAL": {5:[400,300,200,100,50], 4:[400,300,200,100], 3:[200,100,50], 2:[100,50]},
+                            "SPELLTABLE": {5:[300,200,100,50,25], 4:[200,100,50,25], 3:[100,50,20], 2:[50,25]}
                         }
                         detalhes_finais = []
                         for posicao_index, jog_nome in enumerate(coloca_ordem):
@@ -900,24 +1003,24 @@ elif aba == "Ranking":
                 df_detalhe = pd.DataFrame(row["Detalhes_Pontuacao"])
                 st.table(df_detalhe[["Jogador", "Deck", "Pontos"]])
 
-                col_btn_excluir, _ = st.columns([1, 3])
-                with col_btn_excluir:
-                    if st.button(f"Excluir Partida #{row['ID']}", key=f"del_{row['ID']}"):
-                        st.session_state[f"confirmar_excluir_partida_{row['ID']}"] = True
-                        st.rerun()
-
-                if st.session_state.get(f"confirmar_excluir_partida_{row['ID']}", False):
-                    st.warning(f"Tem certeza que deseja excluir a Partida #{row['ID']}? Esta ação não pode ser desfeita.")
-                    col_sim, col_nao, _ = st.columns([1, 1, 4])
-                    with col_sim:
-                        if st.button("Sim, excluir", type="primary", key=f"sim_del_{row['ID']}"):
-                            excluir_partida_db(row["ID"])
-                            st.session_state.partidas = st.session_state.partidas[st.session_state.partidas["ID"] != row["ID"]]
-                            del st.session_state[f"confirmar_excluir_partida_{row['ID']}"]
+                if is_admin:
+                    col_btn_excluir, _ = st.columns([1, 3])
+                    with col_btn_excluir:
+                        if st.button(f"Excluir Partida #{row['ID']}", key=f"del_{row['ID']}"):
+                            st.session_state[f"confirmar_excluir_partida_{row['ID']}"] = True
                             st.rerun()
-                    with col_nao:
-                        if st.button("Cancelar", key=f"nao_del_{row['ID']}"):
-                            del st.session_state[f"confirmar_excluir_partida_{row['ID']}"]
-                            st.rerun()
+                    if st.session_state.get(f"confirmar_excluir_partida_{row['ID']}", False):
+                        st.warning(f"Tem certeza que deseja excluir a Partida #{row['ID']}?")
+                        col_sim, col_nao, _ = st.columns([1, 1, 4])
+                        with col_sim:
+                            if st.button("Sim, excluir", type="primary", key=f"sim_del_{row['ID']}"):
+                                excluir_partida_db(row["ID"])
+                                st.session_state.partidas = st.session_state.partidas[st.session_state.partidas["ID"] != row["ID"]]
+                                del st.session_state[f"confirmar_excluir_partida_{row['ID']}"]
+                                st.rerun()
+                        with col_nao:
+                            if st.button("Cancelar", key=f"nao_del_{row['ID']}"):
+                                del st.session_state[f"confirmar_excluir_partida_{row['ID']}"]
+                                st.rerun()
     else:
         st.info("Nenhuma partida registrada nesta temporada da liga ainda.")
