@@ -244,6 +244,9 @@ def exibir_lista_cartas(cartas):
         background: rgba(255,255,255,0.12); border-radius: 3px;
         margin-right: 6px; font-size: 12px; padding: 0 4px;
     }
+    .card-mana {
+        font-size: 11px; color: #aaa; margin-left: 6px;
+    }
     .card-tooltip {
         display: none; position: fixed; z-index: 99999;
         pointer-events: none; top: 50%; transform: translateY(-50%);
@@ -258,17 +261,43 @@ def exibir_lista_cartas(cartas):
     }
     .card-tooltip img { width: 100%; border-radius: 10px; }
     .card-item:hover .card-tooltip { display: block; }
+    .bloco-titulo {
+        font-size: 13px; font-weight: bold; color: #888;
+        text-transform: uppercase; letter-spacing: 1px;
+        margin: 14px 0 4px 0; padding-bottom: 2px;
+        border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
     </style>
     """, unsafe_allow_html=True)
-    cartas_ordenadas = sorted(cartas, key=lambda c: c["nome"])
-    html = '<div class="card-list-wrap">'
-    for carta in cartas_ordenadas:
-        nome = carta["nome"]
-        qtd = carta.get("quantidade", 1)
-        img = carta.get("imagem_url", "")
-        tooltip = f'<span class="card-tooltip"><img src="{img}" alt="{nome}"/></span>' if img else ""
-        html += f'<div class="card-item"><span class="card-qty">{qtd}x</span>{nome}{tooltip}</div>'
-    html += "</div>"
+
+    # Ordem dos blocos
+    ordem_blocos = ["Comandante", "Criaturas", "Planeswalkers", "Mágicas Instantâneas",
+                    "Feitiços", "Artefatos", "Encantamentos", "Batalhas", "Terrenos", "Outros"]
+
+    # Agrupa por tipo_bloco
+    grupos = {}
+    for carta in cartas:
+        bloco = carta.get("tipo_bloco", "Outros") or "Outros"
+        grupos.setdefault(bloco, []).append(carta)
+
+    html = ""
+    for bloco in ordem_blocos:
+        if bloco not in grupos:
+            continue
+        cartas_bloco = sorted(grupos[bloco], key=lambda c: c["nome"])
+        total = sum(c.get("quantidade", 1) for c in cartas_bloco)
+        html += f'<div class="bloco-titulo">{bloco} ({total})</div>'
+        html += '<div class="card-list-wrap">'
+        for carta in cartas_bloco:
+            nome = carta["nome"]
+            qtd = carta.get("quantidade", 1)
+            img = carta.get("imagem_url", "")
+            mana = carta.get("mana_cost", "")
+            tooltip = f'<span class="card-tooltip"><img src="{img}" alt="{nome}"/></span>' if img else ""
+            mana_span = f'<span class="card-mana">{mana}</span>' if mana else ""
+            html += f'<div class="card-item"><span class="card-qty">{qtd}x</span>{nome}{mana_span}{tooltip}</div>'
+        html += "</div>"
+
     st.markdown(html, unsafe_allow_html=True)
 
 # --- BARRA LATERAL ---
