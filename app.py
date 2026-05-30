@@ -573,7 +573,9 @@ elif aba == "Jogadores":
 
                 if dados_j["decks"]:
                     for nome_d, info_d in dados_j["decks"].items():
-                        cmd_str = f"Primário: {info_d['comandante_primario']} | Secundário: {info_d['comandante_secundario']}"
+                        cmd_str = f"Primário: {info_d['comandante_primario']}"
+                        if info_d.get("comandante_secundario"):
+                            cmd_str += f" | Secundário: {info_d['comandante_secundario']}"
                         if info_d.get("comandante_adicional"):
                             cmd_str += f" | Adicional: {info_d['comandante_adicional']}"
                         col_dk, col_btn_ver = st.columns([3, 1])
@@ -613,10 +615,10 @@ elif aba == "Jogadores":
                             if dk_escolhido_edit != "Selecione um deck para editar...":
                                 dados_dk_edit = dados_j["decks"][dk_escolhido_edit]
                                 edit_cmd_p = st.text_input("Comandante Primário*", value=dados_dk_edit["comandante_primario"], key="txt_edit_cmd_p")
-                                edit_cmd_s = st.text_input("Comandante Secundário*", value=dados_dk_edit["comandante_secundario"], key="txt_edit_cmd_s")
+                                edit_cmd_s = st.text_input("Comandante Secundário (Opcional)", value=dados_dk_edit["comandante_secundario"], key="txt_edit_cmd_s")
                                 edit_cmd_a = st.text_input("Comandante Adicional (Opcional)", value=dados_dk_edit.get("comandante_adicional", ""), key="txt_edit_cmd_a")
                                 if st.button("Salvar Alterações do Deck", key="btn_confirmar_alteracoes_deck"):
-                                    if edit_cmd_p and edit_cmd_s:
+                                    if edit_cmd_p:
                                         dados_j["decks"][dk_escolhido_edit] = {
                                             "comandante_primario": edit_cmd_p.strip(),
                                             "comandante_secundario": edit_cmd_s.strip(),
@@ -668,7 +670,12 @@ elif aba == "Jogadores":
                         st.session_state.busca_precon = busca
 
                         if busca.strip():
-                            sugestoes = [n for n in nomes_catalogo if busca.strip().lower() in n.lower()]
+                            termo = busca.strip().lower()
+                            sugestoes = [
+                                d["nome"] for d in catalogo
+                                if termo in d["nome"].lower()
+                                or any(termo in cmd.lower() for cmd in d.get("comandantes", []))
+                            ]
                             if sugestoes:
                                 st.markdown(f"*{len(sugestoes)} deck(s) encontrado(s):*")
                                 for sug in sugestoes[:10]:
@@ -743,7 +750,9 @@ elif aba == "Decks":
     for nome_jog, dados_jog in st.session_state.jogadores.items():
         exibicao_jog = obter_nome_exibicao(dados_jog, nome_jog)
         for nome_dk, info_dk in dados_jog["decks"].items():
-            cmd_str = f"1º: {info_dk['comandante_primario']} | 2º: {info_dk['comandante_secundario']}"
+            cmd_str = f"1º: {info_dk['comandante_primario']}"
+            if info_dk.get("comandante_secundario"):
+                cmd_str += f" | 2º: {info_dk['comandante_secundario']}"
             if info_dk.get("comandante_adicional"):
                 cmd_str += f" | 3º: {info_dk['comandante_adicional']}"
             decks_escolhidos.append({
@@ -837,7 +846,7 @@ elif aba == "Nova Partida":
                     d1 = st.selectbox("Deck do Jogador 1:", ["Selecione..."] + list(st.session_state.jogadores[real_j1]["decks"].keys()), key="dupla_d1")
                     if d1 != "Selecione...":
                         dk_obj = st.session_state.jogadores[real_j1]["decks"][d1]
-                        opcoes_cmd = [dk_obj["comandante_primario"], dk_obj["comandante_secundario"]]
+                        opcoes_cmd = [c for c in [dk_obj["comandante_primario"], dk_obj["comandante_secundario"]] if c]
                         if dk_obj.get("comandante_adicional"):
                             opcoes_cmd.append(dk_obj["comandante_adicional"])
                         c1 = st.selectbox("Comandante em Campo (J1):", ["Selecione..."] + opcoes_cmd, key="dupla_c1")
@@ -850,7 +859,7 @@ elif aba == "Nova Partida":
                     d2 = st.selectbox("Deck do Jogador 2:", ["Selecione..."] + list(st.session_state.jogadores[real_j2]["decks"].keys()), key="dupla_d2")
                     if d2 != "Selecione...":
                         dk_obj = st.session_state.jogadores[real_j2]["decks"][d2]
-                        opcoes_cmd = [dk_obj["comandante_primario"], dk_obj["comandante_secundario"]]
+                        opcoes_cmd = [c for c in [dk_obj["comandante_primario"], dk_obj["comandante_secundario"]] if c]
                         if dk_obj.get("comandante_adicional"):
                             opcoes_cmd.append(dk_obj["comandante_adicional"])
                         c2 = st.selectbox("Comandante em Campo (J2):", ["Selecione..."] + opcoes_cmd, key="dupla_c2")
@@ -864,7 +873,7 @@ elif aba == "Nova Partida":
                     d3 = st.selectbox("Deck do Jogador 3:", ["Selecione..."] + list(st.session_state.jogadores[real_j3]["decks"].keys()), key="dupla_d3")
                     if d3 != "Selecione...":
                         dk_obj = st.session_state.jogadores[real_j3]["decks"][d3]
-                        opcoes_cmd = [dk_obj["comandante_primario"], dk_obj["comandante_secundario"]]
+                        opcoes_cmd = [c for c in [dk_obj["comandante_primario"], dk_obj["comandante_secundario"]] if c]
                         if dk_obj.get("comandante_adicional"):
                             opcoes_cmd.append(dk_obj["comandante_adicional"])
                         c3 = st.selectbox("Comandante em Campo (J3):", ["Selecione..."] + opcoes_cmd, key="dupla_c3")
@@ -877,7 +886,7 @@ elif aba == "Nova Partida":
                     d4 = st.selectbox("Deck do Jogador 4:", ["Selecione..."] + list(st.session_state.jogadores[real_j4]["decks"].keys()), key="dupla_d4")
                     if d4 != "Selecione...":
                         dk_obj = st.session_state.jogadores[real_j4]["decks"][d4]
-                        opcoes_cmd = [dk_obj["comandante_primario"], dk_obj["comandante_secundario"]]
+                        opcoes_cmd = [c for c in [dk_obj["comandante_primario"], dk_obj["comandante_secundario"]] if c]
                         if dk_obj.get("comandante_adicional"):
                             opcoes_cmd.append(dk_obj["comandante_adicional"])
                         c4 = st.selectbox("Comandante em Campo (J4):", ["Selecione..."] + opcoes_cmd, key="dupla_c4")
@@ -922,7 +931,7 @@ elif aba == "Nova Partida":
                         deck_escolhido = st.selectbox(f"Deck do Jogador {i+1}:", ["Selecione..."] + list(st.session_state.jogadores[real_key]["decks"].keys()), key=f"solo_d_{i}")
                         if deck_escolhido != "Selecione...":
                             dk_obj = st.session_state.jogadores[real_key]["decks"][deck_escolhido]
-                            opcoes_cmd = [dk_obj["comandante_primario"], dk_obj["comandante_secundario"]]
+                            opcoes_cmd = [c for c in [dk_obj["comandante_primario"], dk_obj["comandante_secundario"]] if c]
                             if dk_obj.get("comandante_adicional"):
                                 opcoes_cmd.append(dk_obj["comandante_adicional"])
                             cmd_escolhido = st.selectbox(f"Comandante do Jogador {i+1}:", ["Selecione..."] + opcoes_cmd, key=f"solo_c_{i}")
