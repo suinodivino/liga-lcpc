@@ -548,6 +548,12 @@ elif aba == "Jogadores":
 
         jogador_sel_exibicao = st.selectbox("Visualizar jogador:", list(opcoes_selectbox.keys()), key="sel_ver_jogador_real")
 
+        # Limpa preview ao trocar de jogador
+        if st.session_state.get("ultimo_jogador_visto") != jogador_sel_exibicao:
+            st.session_state.ultimo_jogador_visto = jogador_sel_exibicao
+            st.session_state.deck_precon_preview = None
+            st.session_state.deck_preview_context = None
+
         if jogador_sel_exibicao != "Selecione um jogador...":
             jogador_real = opcoes_selectbox[jogador_sel_exibicao]
             dados_j = st.session_state.jogadores[jogador_real]
