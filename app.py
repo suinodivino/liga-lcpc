@@ -94,10 +94,13 @@ is_admin = st.session_state.is_admin
 # --- FUNÇÕES DE FOTO ---
 def upload_foto(nome_jogador, foto_bytes, extensao="jpg"):
     try:
-        caminho = f"{nome_jogador}.{extensao}"
+        ext_map = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "JPG": "jpeg", "JPEG": "jpeg", "PNG": "png"}
+        ext_norm = ext_map.get(extensao, "jpeg")
+        ext_arquivo = "jpg" if ext_norm == "jpeg" else ext_norm
+        caminho = f"{nome_jogador}.{ext_arquivo}"
         sb.storage.from_("fotos-jogadores").upload(
             caminho, foto_bytes,
-            file_options={"content-type": f"image/{extensao}", "upsert": "true"}
+            file_options={"content-type": f"image/{ext_norm}", "upsert": "true"}
         )
         url = sb.storage.from_("fotos-jogadores").get_public_url(caminho)
         return url
@@ -474,12 +477,14 @@ elif aba == "Cadastro":
                     pass
                 else:
                     dados_edit = st.session_state.jogadores[jog_editar_real]
-                    novo_apelido = st.text_input("Editar Apelido", value=dados_edit["apelido"], key="txt_edit_apelido")
-                    novo_telefone = st.text_input("Editar Telefone", value=dados_edit["telefone"], key="txt_edit_telefone")
-                    novo_email = st.text_input("Editar E-mail", value=dados_edit["email"], key="txt_edit_email")
+                    # Keys dinâmicas por jogador para evitar cache entre trocas
+                    _k = jog_editar_real.replace(" ", "_")
+                    novo_apelido = st.text_input("Editar Apelido", value=dados_edit["apelido"], key=f"txt_edit_apelido_{_k}")
+                    novo_telefone = st.text_input("Editar Telefone", value=dados_edit["telefone"], key=f"txt_edit_telefone_{_k}")
+                    novo_email = st.text_input("Editar E-mail", value=dados_edit["email"], key=f"txt_edit_email_{_k}")
                     if is_admin:
-                        nova_senha = st.text_input("Nova Senha (deixe em branco para não alterar)", type="password", key="txt_edit_senha")
-                    nova_foto = st.file_uploader("Atualizar Foto", type=["jpg", "png", "jpeg"], key="file_edit_foto")
+                        nova_senha = st.text_input("Nova Senha (deixe em branco para não alterar)", type="password", key=f"txt_edit_senha_{_k}")
+                    nova_foto = st.file_uploader("Atualizar Foto", type=["jpg", "png", "jpeg"], key=f"file_edit_foto_{_k}")
 
                     if st.button("Salvar Alterações", key="btn_salvar_edit"):
                         novo_telefone = novo_telefone.strip()
