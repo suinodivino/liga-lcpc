@@ -76,6 +76,13 @@ def tela_login():
                     else:
                         st.error("E-mail ou senha incorretos.")
 
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    st.markdown("""
+<div style='text-align:left; color:#444; font-size:12px; padding: 0 20px;'>
+    Criado por <strong>Suíno Divino</strong>
+</div>
+""", unsafe_allow_html=True)
+
 # --- VERIFICAR SE ESTÁ LOGADO ---
 if "usuario_logado" not in st.session_state:
     st.session_state.usuario_logado = None
@@ -831,6 +838,17 @@ elif aba == "Decks":
                         st.rerun()
     else:
         st.info("Catálogo de precons não encontrado.")
+
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    st.markdown("""
+<div style='text-align:center; color:#444; font-size:12px; border-top:1px solid #333; padding-top:12px;'>
+    Listas de decks fornecidas pelo repositório público
+    <a href='https://github.com/taw/magic-preconstructed-decks-data' target='_blank' style='color:#555;'>magic-preconstructed-decks-data</a>,
+    mantido por <strong>taw</strong>. Imagens das cartas via
+    <a href='https://scryfall.com' target='_blank' style='color:#555;'>Scryfall</a>.
+    Magic: The Gathering é propriedade da Wizards of the Coast LLC.
+</div>
+""", unsafe_allow_html=True)
 
 # ===================== NOVA PARTIDA =====================
 elif aba == "Nova Partida":
