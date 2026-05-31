@@ -44,47 +44,19 @@ def verificar_admin(email):
 
 # --- TELA DE LOGIN ---
 def tela_login():
-    # Encontra logo
     logo_path = None
     for nome_arquivo in ["logo.jpg", "logo.jpeg", "logo.png", "logo.PNG", "logo.JPG"]:
         if os.path.exists(nome_arquivo):
             logo_path = nome_arquivo
             break
 
-    st.markdown("""
-    <style>
-    .login-container {
-        max-width: 400px;
-        margin: 0 auto;
-        padding: 20px;
-        text-align: center;
-    }
-    .login-container img {
-        width: 180px;
-        margin-bottom: 16px;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
     _, col_center, _ = st.columns([1, 2, 1])
     with col_center:
         if logo_path:
-            col_logo, col_titulo = st.columns([1, 2])
+            _, col_logo, _ = st.columns([1, 2, 1])
             with col_logo:
                 st.image(logo_path, use_container_width=True)
-            with col_titulo:
-                st.markdown("""
-                <div style='display:flex; flex-direction:column; justify-content:center; height:100%; padding-top:20px;'>
-                    <h2 style='margin:0; line-height:1.2;'>Liga Commander<br>Pré-Con</h2>
-                    <p style='color:#888; margin:6px 0 0 0;'>Faça login para acessar</p>
-                </div>
-                """, unsafe_allow_html=True)
-        else:
-            st.markdown("<h2 style='text-align:center;'>Liga Commander Pré-Con</h2>", unsafe_allow_html=True)
-            st.markdown("<p style='text-align:center; color:#888;'>Faça login para acessar</p>", unsafe_allow_html=True)
-
         st.markdown("<br>", unsafe_allow_html=True)
-
         with st.form("form_login"):
             email = st.text_input("E-mail", placeholder="seu@email.com")
             senha = st.text_input("Senha", type="password", placeholder="••••••••")
@@ -111,6 +83,17 @@ if "usuario_email" not in st.session_state:
     st.session_state.usuario_email = None
 if "is_admin" not in st.session_state:
     st.session_state.is_admin = False
+
+# Tenta recuperar sessão ativa do Supabase (mantém login após F5)
+if not st.session_state.usuario_logado:
+    try:
+        sessao = sb.auth.get_session()
+        if sessao and sessao.user:
+            st.session_state.usuario_logado = sessao.user
+            st.session_state.usuario_email = sessao.user.email
+            st.session_state.is_admin = verificar_admin(sessao.user.email)
+    except:
+        pass
 
 if not st.session_state.usuario_logado:
     tela_login()
