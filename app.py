@@ -337,8 +337,8 @@ if st.sidebar.button("Sair", use_container_width=True):
 with st.sidebar:
     aba = option_menu(
         menu_title=None,
-        options=["Home", "Cadastro", "Jogadores", "Decks", "Nova Partida", "Ranking", "Info"],
-        icons=["house", "person-plus", "people", "card-list", "controller", "trophy", "info-circle"],
+        options=["Home", "Cadastro", "Jogadores", "Decks", "Nova Partida", "Ranking"],
+        icons=["house", "person-plus", "people", "card-list", "controller", "trophy"],
         menu_icon=None,
         default_index=0,
         styles={
@@ -386,6 +386,7 @@ Um abraço,<br>
 
 # ===================== CADASTRO =====================
 elif aba == "Cadastro":
+    st.header("Gerenciamento de Perfis")
 
     # Abas visíveis dependem do nível de acesso
     if is_admin:
@@ -764,6 +765,7 @@ elif aba == "Jogadores":
 
 # ===================== DECKS =====================
 elif aba == "Decks":
+    st.header("Arsenal Geral da LCPC")
 
     decks_escolhidos = []
     nomes_decks_escolhidos = {}
@@ -784,9 +786,11 @@ elif aba == "Decks":
                 nomes_decks_escolhidos[nome_dk] = []
             nomes_decks_escolhidos[nome_dk].append(exibicao_jog)
 
-    st.subheader("Decks Precons")
+    st.subheader("Decks Disponíveis no Catálogo")
     catalogo = carregar_catalogo()
     if catalogo:
+        # Remove versões Collector's Edition (duplicatas sem diferença de lista)
+        catalogo = [d for d in catalogo if "collector" not in d["nome"].lower()]
         # Ordena do mais novo para o mais antigo
         catalogo = sorted(catalogo, key=lambda d: d.get("data_lancamento", ""), reverse=True)
         busca_catalogo = st.text_input("Filtrar catálogo:", placeholder="Digite para filtrar...", key="filtro_catalogo")
@@ -1111,42 +1115,3 @@ elif aba == "Ranking":
                                 st.rerun()
     else:
         st.info("Nenhuma partida registrada nesta temporada da liga ainda.")
-
-# ===================== INFO =====================
-elif aba == "Info":
-    _, col_center, _ = st.columns([1, 3, 1])
-    with col_center:
-        st.markdown("""
-<div style='text-align:center; padding: 20px 0 10px 0;'>
-    <h2>Sobre a Liga Commander Pré-Con</h2>
-</div>
-""", unsafe_allow_html=True)
-
-        st.divider()
-
-        st.markdown("""
-### Criação e Desenvolvimento
-
-**Liga Commander Pré-Con (LCPC)** foi idealizada e criada por **Adrian Malta**, com o objetivo de reunir jogadores de Magic: The Gathering em partidas equilibradas, focadas na experiência social e competitiva dos precons oficiais.
-
-A plataforma de gestão da liga foi desenvolvida com suporte da inteligência artificial **Claude**, da [Anthropic](https://www.anthropic.com), utilizada como ferramenta de criação e programação colaborativa.
-
----
-
-### Créditos
-
-**Wizards of the Coast**
-Todas as imagens de cartas, nomes, símbolos e demais elementos do universo de Magic: The Gathering são propriedade intelectual da **Wizards of the Coast LLC**. O uso nesta plataforma é feito de forma não comercial, respeitando as diretrizes da comunidade.
-
-**Scryfall**
-As imagens das cartas são fornecidas pela API pública do [Scryfall](https://scryfall.com), o maior banco de dados de cartas de Magic da comunidade.
-
-**TAW — Magic Preconstructed Decks Data**
-A base de dados dos decks precons foi importada do repositório público [magic-preconstructed-decks-data](https://github.com/taw/magic-preconstructed-decks-data), mantido pela comunidade de desenvolvedores de Magic.
-
----
-
-<div style='text-align:center; color:#555; font-size:13px; padding-top:10px;'>
-    LCPC — Liga Commander Pré-Con · Todos os direitos reservados aos seus respectivos proprietários.
-</div>
-""", unsafe_allow_html=True)
