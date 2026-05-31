@@ -251,58 +251,81 @@ def obter_nome_exibicao(dados_jogador, nome_chave):
 
 # --- FUNÇÃO: EXIBE LISTA DE CARTAS COM HOVER ---
 def exibir_lista_cartas(cartas):
-    st.markdown("""
-    <style>
-    .card-list-wrap { column-count: 2; column-gap: 24px; }
-    @media (max-width: 768px) { .card-list-wrap { column-count: 1; } }
-    .card-item {
-        position: relative; display: block; padding: 3px 8px;
-        margin: 2px 0; border-radius: 4px; font-size: 14px;
-        cursor: default; break-inside: avoid;
-    }
-    .card-item:hover { background-color: rgba(255,255,255,0.08); }
-    .card-qty {
-        display: inline-block; min-width: 24px; text-align: center;
-        background: rgba(255,255,255,0.12); border-radius: 3px;
-        margin-right: 6px; font-size: 12px; padding: 0 4px;
-    }
-    .card-mana {
-        font-size: 11px; color: #aaa; margin-left: 6px;
-    }
-    .card-tooltip {
-        display: none; position: fixed; z-index: 99999;
-        pointer-events: none; top: 50%; transform: translateY(-50%);
-        left: 55%; width: 280px; border-radius: 10px;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.7);
-    }
-    @media (max-width: 768px) {
-        .card-tooltip {
-            left: 50%; transform: translate(-50%, -50%);
-            top: 40%; width: 200px;
-        }
-    }
-    .card-tooltip img { width: 100%; border-radius: 10px; }
-    .card-item:hover .card-tooltip { display: block; }
-    .bloco-titulo {
-        font-size: 13px; font-weight: bold; color: #888;
-        text-transform: uppercase; letter-spacing: 1px;
-        margin: 14px 0 4px 0; padding-bottom: 2px;
-        border-bottom: 1px solid rgba(255,255,255,0.1);
-    }
-    </style>
-    """, unsafe_allow_html=True)
+    import json as _json
 
-    # Ordem dos blocos
     ordem_blocos = ["Comandante", "Criaturas", "Planeswalkers", "Mágicas Instantâneas",
                     "Feitiços", "Artefatos", "Encantamentos", "Batalhas", "Terrenos", "Outros"]
 
-    # Agrupa por tipo_bloco
     grupos = {}
     for carta in cartas:
         bloco = carta.get("tipo_bloco", "Outros") or "Outros"
         grupos.setdefault(bloco, []).append(carta)
 
-    html = ""
+    # Imagem inicial = comandante, ou primeira carta com imagem
+    img_inicial = ""
+    nome_inicial = ""
+    for bloco in ordem_blocos:
+        if bloco in grupos:
+            for c in grupos[bloco]:
+                if c.get("imagem_url"):
+                    img_inicial = c["imagem_url"]
+                    nome_inicial = c["nome"]
+                    break
+        if img_inicial:
+            break
+
+    html = f"""
+<style>
+.deck-viewer {{ display: flex; gap: 24px; align-items: flex-start; }}
+.deck-img-panel {{
+    position: sticky; top: 20px;
+    width: 220px; min-width: 220px;
+    flex-shrink: 0;
+}}
+@media (max-width: 768px) {{
+    .deck-viewer {{ flex-direction: column; }}
+    .deck-img-panel {{ width: 100%; min-width: unset; position: static; }}
+}}
+.deck-img-panel img {{
+    width: 100%; border-radius: 10px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+    transition: opacity 0.15s ease;
+}}
+.deck-img-name {{
+    text-align: center; font-size: 12px; color: #aaa;
+    margin-top: 6px; min-height: 18px;
+}}
+.deck-list-panel {{ flex: 1; min-width: 0; }}
+.card-list-wrap {{ column-count: 2; column-gap: 20px; }}
+@media (max-width: 768px) {{ .card-list-wrap {{ column-count: 1; }} }}
+.card-item {{
+    display: block; padding: 3px 8px; margin: 2px 0;
+    border-radius: 4px; font-size: 14px; cursor: default;
+    break-inside: avoid;
+}}
+.card-item:hover {{ background-color: rgba(255,255,255,0.08); }}
+.card-qty {{
+    display: inline-block; min-width: 24px; text-align: center;
+    background: rgba(255,255,255,0.12); border-radius: 3px;
+    margin-right: 6px; font-size: 12px; padding: 0 4px;
+}}
+.card-mana {{ font-size: 11px; color: #aaa; margin-left: 6px; }}
+.bloco-titulo {{
+    font-size: 13px; font-weight: bold; color: #888;
+    text-transform: uppercase; letter-spacing: 1px;
+    margin: 14px 0 4px 0; padding-bottom: 2px;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    column-span: all;
+}}
+</style>
+<div class="deck-viewer">
+  <div class="deck-img-panel">
+    <img id="card-preview-img" src="{img_inicial}" alt="{nome_inicial}"/>
+    <div class="deck-img-name" id="card-preview-name">{nome_inicial}</div>
+  </div>
+  <div class="deck-list-panel">
+"""
+
     for bloco in ordem_blocos:
         if bloco not in grupos:
             continue
@@ -311,15 +334,33 @@ def exibir_lista_cartas(cartas):
         html += f'<div class="bloco-titulo">{bloco} ({total})</div>'
         html += '<div class="card-list-wrap">'
         for carta in cartas_bloco:
-            nome = carta["nome"]
+            nome = carta["nome"].replace('"', '&quot;')
             qtd = carta.get("quantidade", 1)
-            img = carta.get("imagem_url", "")
+            img = carta.get("imagem_url", "").replace('"', '%22')
             mana = carta.get("mana_cost", "")
-            tooltip = f'<span class="card-tooltip"><img src="{img}" alt="{nome}"/></span>' if img else ""
             mana_span = f'<span class="card-mana">{mana}</span>' if mana else ""
-            html += f'<div class="card-item"><span class="card-qty">{qtd}x</span>{nome}{mana_span}{tooltip}</div>'
+            data_img = f'data-img="{img}"' if img else ""
+            data_nome = f'data-nome="{nome}"'
+            html += f'<div class="card-item" {data_img} {data_nome} onmouseenter="previewCard(this)"><span class="card-qty">{qtd}x</span>{nome}{mana_span}</div>'
         html += "</div>"
 
+    html += """
+  </div>
+</div>
+<script>
+function previewCard(el) {
+    var img = el.getAttribute("data-img");
+    var nome = el.getAttribute("data-nome");
+    if (img) {
+        document.getElementById("card-preview-img").src = img;
+        document.getElementById("card-preview-img").alt = nome;
+    }
+    if (nome) {
+        document.getElementById("card-preview-name").textContent = nome;
+    }
+}
+</script>
+"""
     st.markdown(html, unsafe_allow_html=True)
 
 # --- BARRA LATERAL ---
