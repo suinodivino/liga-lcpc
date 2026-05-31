@@ -252,6 +252,7 @@ def obter_nome_exibicao(dados_jogador, nome_chave):
 # --- FUNÇÃO: EXIBE LISTA DE CARTAS COM HOVER ---
 def exibir_lista_cartas(cartas):
     import uuid as _uuid
+    import streamlit.components.v1 as _components
 
     ordem_blocos = ["Comandante", "Criaturas", "Planeswalkers", "Mágicas Instantâneas",
                     "Feitiços", "Artefatos", "Encantamentos", "Batalhas", "Terrenos", "Outros"]
@@ -261,7 +262,6 @@ def exibir_lista_cartas(cartas):
         bloco = carta.get("tipo_bloco", "Outros") or "Outros"
         grupos.setdefault(bloco, []).append(carta)
 
-    # Imagem inicial = comandante ou primeira carta com imagem
     img_inicial = ""
     nome_inicial = ""
     for bloco in ordem_blocos:
@@ -274,105 +274,88 @@ def exibir_lista_cartas(cartas):
         if img_inicial:
             break
 
-    # ID único para permitir múltiplas listas na mesma página
-    uid = _uuid.uuid4().hex[:8]
-
     lista_html = ""
+    total_cartas = 0
     for bloco in ordem_blocos:
         if bloco not in grupos:
             continue
         cartas_bloco = sorted(grupos[bloco], key=lambda c: c["nome"])
         total = sum(c.get("quantidade", 1) for c in cartas_bloco)
-        lista_html += f'<div class="bloco-titulo-{uid}">{bloco} ({total})</div>'
-        lista_html += f'<div class="card-list-wrap-{uid}">'
+        total_cartas += total
+        lista_html += f'<div class="bloco-titulo">{bloco} ({total})</div>'
+        lista_html += '<div class="card-col">'
         for carta in cartas_bloco:
             nome = carta["nome"].replace('"', '&quot;').replace("'", "&#39;")
             qtd = carta.get("quantidade", 1)
             img = carta.get("imagem_url", "").replace('"', '%22')
             mana = carta.get("mana_cost", "")
-            mana_span = f'<span class="cmana-{uid}">{mana}</span>' if mana else ""
-            lista_html += (
-                f'<div class="ci-{uid}" data-img="{img}" data-nome="{nome}">' +
-                f'<span class="cqty-{uid}">{qtd}x</span>{nome}{mana_span}</div>'
-            )
+            mana_html = f'<span class="mana">{mana}</span>' if mana else ""
+            lista_html += f'<div class="ci" data-img="{img}" data-nome="{nome}"><span class="qty">{qtd}x</span>{nome}{mana_html}</div>'
         lista_html += "</div>"
 
-    html = f"""
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
 <style>
-.dv-{uid} {{ display: flex; gap: 24px; align-items: flex-start; }}
-.dip-{uid} {{ position: sticky; top: 20px; width: 220px; min-width: 220px; flex-shrink: 0; }}
-@media (max-width: 768px) {{
-    .dv-{uid} {{ flex-direction: column; }}
-    .dip-{uid} {{ width: 100%; min-width: unset; position: static; }}
-}}
-.dip-{uid} img {{
-    width: 100%; border-radius: 10px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.6);
-}}
-.din-{uid} {{
-    text-align: center; font-size: 12px; color: #aaa;
-    margin-top: 6px; min-height: 18px;
-}}
-.dlp-{uid} {{ flex: 1; min-width: 0; }}
-.card-list-wrap-{uid} {{ column-count: 2; column-gap: 20px; }}
-@media (max-width: 768px) {{ .card-list-wrap-{uid} {{ column-count: 1; }} }}
-.ci-{uid} {{
-    display: block; padding: 3px 8px; margin: 2px 0;
-    border-radius: 4px; font-size: 14px; cursor: pointer;
-    break-inside: avoid;
-}}
-.ci-{uid}:hover {{ background-color: rgba(255,255,255,0.08); }}
-.cqty-{uid} {{
-    display: inline-block; min-width: 24px; text-align: center;
-    background: rgba(255,255,255,0.12); border-radius: 3px;
-    margin-right: 6px; font-size: 12px; padding: 0 4px;
-}}
-.cmana-{uid} {{ font-size: 11px; color: #aaa; margin-left: 6px; }}
-.bloco-titulo-{uid} {{
-    font-size: 13px; font-weight: bold; color: #888;
+  body {{ margin:0; padding:0; background:transparent; font-family: sans-serif; color: #eee; }}
+  .viewer {{ display: flex; gap: 20px; align-items: flex-start; }}
+  .img-panel {{ width: 200px; min-width: 200px; flex-shrink: 0; }}
+  .img-panel img {{ width: 100%; border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.7); display: block; }}
+  .img-name {{ text-align: center; font-size: 11px; color: #aaa; margin-top: 5px; min-height: 16px; }}
+  .list-panel {{ flex: 1; min-width: 0; columns: 2; column-gap: 16px; }}
+  .bloco-titulo {{
+    font-size: 12px; font-weight: bold; color: #888;
     text-transform: uppercase; letter-spacing: 1px;
-    margin: 14px 0 4px 0; padding-bottom: 2px;
+    margin: 12px 0 3px 0; padding-bottom: 2px;
     border-bottom: 1px solid rgba(255,255,255,0.1);
-    column-span: all;
-}}
+    break-inside: avoid; column-span: all;
+  }}
+  .card-col {{ break-inside: avoid; }}
+  .ci {{
+    display: block; padding: 2px 6px; margin: 1px 0;
+    border-radius: 4px; font-size: 13px; cursor: pointer;
+    break-inside: avoid; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }}
+  .ci:hover {{ background-color: rgba(255,255,255,0.1); }}
+  .qty {{
+    display: inline-block; min-width: 22px; text-align: center;
+    background: rgba(255,255,255,0.12); border-radius: 3px;
+    margin-right: 5px; font-size: 11px; padding: 0 3px;
+  }}
+  .mana {{ font-size: 10px; color: #999; margin-left: 5px; }}
+  @media (max-width: 500px) {{
+    .viewer {{ flex-direction: column; }}
+    .img-panel {{ width: 100%; }}
+    .list-panel {{ columns: 1; }}
+  }}
 </style>
-<div class="dv-{uid}">
-  <div class="dip-{uid}">
-    <img id="img-{uid}" src="{img_inicial}" alt="{nome_inicial}"/>
-    <div class="din-{uid}" id="nome-{uid}">{nome_inicial}</div>
+</head>
+<body>
+<div class="viewer">
+  <div class="img-panel">
+    <img id="preview-img" src="{img_inicial}" alt="{nome_inicial}"/>
+    <div class="img-name" id="preview-nome">{nome_inicial}</div>
   </div>
-  <div class="dlp-{uid}">
+  <div class="list-panel">
     {lista_html}
   </div>
 </div>
 <script>
-(function() {{
-    function attachListeners() {{
-        var items = document.querySelectorAll('.ci-{uid}');
-        if (!items.length) {{
-            setTimeout(attachListeners, 200);
-            return;
-        }}
-        items.forEach(function(el) {{
-            el.addEventListener('mouseenter', function() {{
-                var img = this.getAttribute('data-img');
-                var nome = this.getAttribute('data-nome');
-                var imgEl = document.getElementById('img-{uid}');
-                var nomeEl = document.getElementById('nome-{uid}');
-                if (img && imgEl) imgEl.src = img;
-                if (nome && nomeEl) nomeEl.textContent = nome;
-            }});
-        }});
-    }}
-    if (document.readyState === 'loading') {{
-        document.addEventListener('DOMContentLoaded', attachListeners);
-    }} else {{
-        attachListeners();
-    }}
-}})();
+  document.querySelectorAll('.ci').forEach(function(el) {{
+    el.addEventListener('mouseenter', function() {{
+      var img = this.dataset.img;
+      var nome = this.dataset.nome;
+      if (img) document.getElementById('preview-img').src = img;
+      document.getElementById('preview-nome').textContent = nome || '';
+    }});
+  }});
 </script>
-"""
-    st.markdown(html, unsafe_allow_html=True)
+</body>
+</html>"""
+
+    altura = max(500, total_cartas * 22)
+    _components.html(html, height=altura, scrolling=True)
+
 
 # --- BARRA LATERAL ---
 formatos_logo = ["logo.jpg", "logo.jpeg", "logo.png", "logo.PNG", "logo.JPG"]
@@ -888,7 +871,6 @@ elif aba == "Jogadores":
 
 # ===================== DECKS =====================
 elif aba == "Decks":
-    st.header("Arsenal Geral da LCPC")
 
     decks_escolhidos = []
     nomes_decks_escolhidos = {}
@@ -909,7 +891,7 @@ elif aba == "Decks":
                 nomes_decks_escolhidos[nome_dk] = []
             nomes_decks_escolhidos[nome_dk].append(exibicao_jog)
 
-    st.subheader("Decks Disponíveis no Catálogo")
+    st.subheader("Decks Precons")
     catalogo = carregar_catalogo()
     if catalogo:
         # Remove versões Collector's Edition (duplicatas sem diferença de lista)
