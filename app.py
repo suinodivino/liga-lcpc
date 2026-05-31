@@ -608,68 +608,101 @@ elif aba == "Jogadores":
                             cmd_str += f" | Secundário: {info_d['comandante_secundario']}"
                         if info_d.get("comandante_adicional"):
                             cmd_str += f" | Adicional: {info_d['comandante_adicional']}"
-                        col_dk, col_btn_ver = st.columns([3, 1])
+
+                        # Botões inline por deck
+                        if pode_editar:
+                            col_dk, col_ver, col_edit, col_del = st.columns([3, 1, 1, 1])
+                        else:
+                            col_dk, col_ver = st.columns([4, 1])
+
                         with col_dk:
                             st.markdown(f"**{nome_d.upper()}**  \n{cmd_str}")
-                        with col_btn_ver:
-                            if st.button("Ver Lista", key=f"ver_lista_{jogador_real}_{nome_d}"):
-                                precon = buscar_precon_por_nome(nome_d)
-                                if precon:
-                                    st.session_state.deck_precon_preview = precon
-                                    st.session_state.deck_preview_context = "arsenal"
+                        with col_ver:
+                            if st.button("Ver", key=f"ver_lista_{jogador_real}_{nome_d}"):
+                                if st.session_state.get("deck_preview_context") == f"arsenal_{nome_d}":
+                                    st.session_state.deck_precon_preview = None
+                                    st.session_state.deck_preview_context = None
                                 else:
-                                    st.warning("Lista não encontrada no catálogo.")
-
-                    if st.session_state.get("deck_preview_context") == "arsenal" and st.session_state.deck_precon_preview:
-                        precon = st.session_state.deck_precon_preview
-                        with st.expander(f"Lista: {precon['nome']}", expanded=True):
-                            cmds = precon.get("comandantes", [])
-                            if cmds:
-                                st.markdown(f"**Comandantes:** {' | '.join(cmds)}")
-                            st.markdown(f"*{precon.get('set_nome', '')}*")
-                            st.divider()
-                            exibir_lista_cartas(precon.get("cartas", []))
-                            if st.button("Fechar Lista", key="fechar_preview_arsenal"):
-                                st.session_state.deck_precon_preview = None
-                                st.session_state.deck_preview_context = None
+                                    precon = buscar_precon_por_nome(nome_d)
+                                    if precon:
+                                        st.session_state.deck_precon_preview = precon
+                                        st.session_state.deck_preview_context = f"arsenal_{nome_d}"
+                                    else:
+                                        st.warning("Lista não encontrada no catálogo.")
                                 st.rerun()
 
-                    # Edição e exclusão de deck apenas para quem pode editar
-                    if pode_editar:
-                        st.markdown("<br>", unsafe_allow_html=True)
-                        tab_gerenciar_existentes, tab_remover_existente = st.tabs(["Editar Deck", "Excluir Deck"])
-
-                        with tab_gerenciar_existentes:
-                            opcoes_edit_dk = ["Selecione um deck para editar..."] + list(dados_j["decks"].keys())
-                            dk_escolhido_edit = st.selectbox("Qual deck deseja alterar?", opcoes_edit_dk, key="sel_dk_gerenciamento_edit")
-                            if dk_escolhido_edit != "Selecione um deck para editar...":
-                                dados_dk_edit = dados_j["decks"][dk_escolhido_edit]
-                                edit_cmd_p = st.text_input("Comandante Primário*", value=dados_dk_edit["comandante_primario"], key="txt_edit_cmd_p")
-                                edit_cmd_s = st.text_input("Comandante Secundário (Opcional)", value=dados_dk_edit["comandante_secundario"], key="txt_edit_cmd_s")
-                                edit_cmd_a = st.text_input("Comandante Adicional (Opcional)", value=dados_dk_edit.get("comandante_adicional", ""), key="txt_edit_cmd_a")
-                                if st.button("Salvar Alterações do Deck", key="btn_confirmar_alteracoes_deck"):
-                                    if edit_cmd_p:
-                                        dados_j["decks"][dk_escolhido_edit] = {
-                                            "comandante_primario": edit_cmd_p.strip(),
-                                            "comandante_secundario": edit_cmd_s.strip(),
-                                            "comandante_adicional": edit_cmd_a.strip() if edit_cmd_a else "",
-                                            "url": dados_dk_edit.get("url", "")
-                                        }
-                                        salvar_deck(jogador_real, dk_escolhido_edit, dados_j["decks"][dk_escolhido_edit])
-                                        st.success(f"Deck '{dk_escolhido_edit}' atualizado!")
-                                        st.rerun()
-                                    else:
-                                        st.error("Comandante Primário e Secundário são obrigatórios.")
-
-                        with tab_remover_existente:
-                            opcoes_deck = ["Selecione um deck..."] + list(dados_j["decks"].keys())
-                            deck_excluir = st.selectbox("Escolha o deck para remover:", opcoes_deck, key="sel_dk_excluir_real")
-                            if deck_excluir != "Selecione um deck...":
-                                if st.button("Remover Este Deck", type="primary", key="btn_remover_dk_real"):
-                                    excluir_deck_db(jogador_real, deck_excluir)
-                                    del dados_j["decks"][deck_excluir]
-                                    st.success(f"Deck '{deck_excluir}' removido com sucesso!")
+                        if pode_editar:
+                            with col_edit:
+                                if st.button("Editar", key=f"btn_editar_{jogador_real}_{nome_d}"):
+                                    st.session_state[f"editando_deck_{nome_d}"] = not st.session_state.get(f"editando_deck_{nome_d}", False)
                                     st.rerun()
+                            with col_del:
+                                if st.button("Excluir", key=f"btn_excluir_{jogador_real}_{nome_d}"):
+                                    st.session_state[f"confirmar_excluir_deck_{nome_d}"] = True
+                                    st.rerun()
+
+                        # Preview da lista inline
+                        if st.session_state.get("deck_preview_context") == f"arsenal_{nome_d}" and st.session_state.deck_precon_preview:
+                            precon = st.session_state.deck_precon_preview
+                            with st.expander(f"Lista: {precon['nome']}", expanded=True):
+                                cmds = precon.get("comandantes", [])
+                                if cmds:
+                                    st.markdown(f"**Comandantes:** {' | '.join(cmds)}")
+                                st.markdown(f"*{precon.get('set_nome', '')}*")
+                                st.divider()
+                                exibir_lista_cartas(precon.get("cartas", []))
+                                if st.button("Fechar Lista", key=f"fechar_preview_arsenal_{nome_d}"):
+                                    st.session_state.deck_precon_preview = None
+                                    st.session_state.deck_preview_context = None
+                                    st.rerun()
+
+                        # Formulário de edição inline
+                        if pode_editar and st.session_state.get(f"editando_deck_{nome_d}", False):
+                            with st.container():
+                                st.markdown(f"**Editando: {nome_d.upper()}**")
+                                dados_dk_edit = dados_j["decks"][nome_d]
+                                _ke = nome_d.replace(" ", "_")
+                                edit_cmd_p = st.text_input("Comandante Primário*", value=dados_dk_edit["comandante_primario"], key=f"edit_cmd_p_{_ke}")
+                                edit_cmd_s = st.text_input("Comandante Secundário (Opcional)", value=dados_dk_edit.get("comandante_secundario", ""), key=f"edit_cmd_s_{_ke}")
+                                edit_cmd_a = st.text_input("Comandante Adicional (Opcional)", value=dados_dk_edit.get("comandante_adicional", ""), key=f"edit_cmd_a_{_ke}")
+                                col_s, col_c, _ = st.columns([1, 1, 4])
+                                with col_s:
+                                    if st.button("Salvar", type="primary", key=f"salvar_edit_dk_{_ke}"):
+                                        if edit_cmd_p:
+                                            dados_j["decks"][nome_d] = {
+                                                "comandante_primario": edit_cmd_p.strip(),
+                                                "comandante_secundario": edit_cmd_s.strip(),
+                                                "comandante_adicional": edit_cmd_a.strip() if edit_cmd_a else "",
+                                                "url": dados_dk_edit.get("url", "")
+                                            }
+                                            salvar_deck(jogador_real, nome_d, dados_j["decks"][nome_d])
+                                            st.session_state[f"editando_deck_{nome_d}"] = False
+                                            st.success(f"Deck '{nome_d}' atualizado!")
+                                            st.rerun()
+                                        else:
+                                            st.error("Comandante Primário é obrigatório.")
+                                with col_c:
+                                    if st.button("Cancelar", key=f"cancelar_edit_dk_{_ke}"):
+                                        st.session_state[f"editando_deck_{nome_d}"] = False
+                                        st.rerun()
+
+                        # Confirmação de exclusão inline
+                        if pode_editar and st.session_state.get(f"confirmar_excluir_deck_{nome_d}", False):
+                            st.warning(f"Tem certeza que deseja remover **{nome_d}**?")
+                            col_sim, col_nao, _ = st.columns([1, 1, 4])
+                            with col_sim:
+                                if st.button("Sim, remover", type="primary", key=f"sim_excluir_dk_{nome_d}"):
+                                    excluir_deck_db(jogador_real, nome_d)
+                                    del dados_j["decks"][nome_d]
+                                    del st.session_state[f"confirmar_excluir_deck_{nome_d}"]
+                                    st.success(f"Deck '{nome_d}' removido!")
+                                    st.rerun()
+                            with col_nao:
+                                if st.button("Cancelar", key=f"nao_excluir_dk_{nome_d}"):
+                                    del st.session_state[f"confirmar_excluir_deck_{nome_d}"]
+                                    st.rerun()
+
+                        st.markdown("---")
                 else:
                     st.info("Sem decks vinculados no momento.")
 
