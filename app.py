@@ -656,23 +656,54 @@ elif aba == "Jogadores":
                                     st.session_state.deck_preview_context = None
                                     st.rerun()
 
-                        # Formulário de edição inline
+                        # Formulário de edição inline com comandantes restritos às lendárias do deck
                         if pode_editar and st.session_state.get(f"editando_deck_{nome_d}", False):
                             with st.container():
                                 st.markdown(f"**Editando: {nome_d.upper()}**")
                                 dados_dk_edit = dados_j["decks"][nome_d]
                                 _ke = nome_d.replace(" ", "_")
-                                edit_cmd_p = st.text_input("Comandante Primário*", value=dados_dk_edit["comandante_primario"], key=f"edit_cmd_p_{_ke}")
-                                edit_cmd_s = st.text_input("Comandante Secundário (Opcional)", value=dados_dk_edit.get("comandante_secundario", ""), key=f"edit_cmd_s_{_ke}")
-                                edit_cmd_a = st.text_input("Comandante Adicional (Opcional)", value=dados_dk_edit.get("comandante_adicional", ""), key=f"edit_cmd_a_{_ke}")
+
+                                # Busca cartas lendárias do deck no catálogo
+                                precon_edit = buscar_precon_por_nome(nome_d)
+                                lendarias = []
+                                if precon_edit:
+                                    lendarias = [
+                                        c["nome"] for c in precon_edit.get("cartas", [])
+                                        if "legendary" in c.get("type_line", "").lower()
+                                    ]
+
+                                if lendarias:
+                                    # Selectbox com lendárias disponíveis
+                                    cmd_p_atual = dados_dk_edit.get("comandante_primario", "")
+                                    cmd_s_atual = dados_dk_edit.get("comandante_secundario", "")
+                                    cmd_a_atual = dados_dk_edit.get("comandante_adicional", "")
+
+                                    idx_p = lendarias.index(cmd_p_atual) if cmd_p_atual in lendarias else 0
+                                    edit_cmd_p = st.selectbox("Comandante Primário*", lendarias, index=idx_p, key=f"edit_cmd_p_{_ke}")
+
+                                    opcoes_s = ["(Nenhum)"] + [l for l in lendarias if l != edit_cmd_p]
+                                    idx_s = opcoes_s.index(cmd_s_atual) if cmd_s_atual in opcoes_s else 0
+                                    edit_cmd_s_sel = st.selectbox("Comandante Secundário (Opcional)", opcoes_s, index=idx_s, key=f"edit_cmd_s_{_ke}")
+                                    edit_cmd_s = "" if edit_cmd_s_sel == "(Nenhum)" else edit_cmd_s_sel
+
+                                    opcoes_a = ["(Nenhum)"] + [l for l in lendarias if l not in [edit_cmd_p, edit_cmd_s]]
+                                    idx_a = opcoes_a.index(cmd_a_atual) if cmd_a_atual in opcoes_a else 0
+                                    edit_cmd_a_sel = st.selectbox("Comandante Adicional (Opcional)", opcoes_a, index=idx_a, key=f"edit_cmd_a_{_ke}")
+                                    edit_cmd_a = "" if edit_cmd_a_sel == "(Nenhum)" else edit_cmd_a_sel
+                                else:
+                                    # Fallback para texto livre se não encontrar lendárias
+                                    edit_cmd_p = st.text_input("Comandante Primário*", value=dados_dk_edit.get("comandante_primario", ""), key=f"edit_cmd_p_{_ke}")
+                                    edit_cmd_s = st.text_input("Comandante Secundário (Opcional)", value=dados_dk_edit.get("comandante_secundario", ""), key=f"edit_cmd_s_{_ke}")
+                                    edit_cmd_a = st.text_input("Comandante Adicional (Opcional)", value=dados_dk_edit.get("comandante_adicional", ""), key=f"edit_cmd_a_{_ke}")
+
                                 col_s, col_c, _ = st.columns([1, 1, 4])
                                 with col_s:
                                     if st.button("Salvar", type="primary", key=f"salvar_edit_dk_{_ke}"):
                                         if edit_cmd_p:
                                             dados_j["decks"][nome_d] = {
-                                                "comandante_primario": edit_cmd_p.strip(),
-                                                "comandante_secundario": edit_cmd_s.strip(),
-                                                "comandante_adicional": edit_cmd_a.strip() if edit_cmd_a else "",
+                                                "comandante_primario": edit_cmd_p,
+                                                "comandante_secundario": edit_cmd_s,
+                                                "comandante_adicional": edit_cmd_a,
                                                 "url": dados_dk_edit.get("url", "")
                                             }
                                             salvar_deck(jogador_real, nome_d, dados_j["decks"][nome_d])
@@ -853,13 +884,43 @@ elif aba == "Decks":
                 st.markdown(f"*{deck_cat.get('set_nome', '')}*")
                 if donos:
                     st.warning(f"Este deck já foi escolhido por: **{', '.join(donos)}**. Você ainda pode vinculá-lo, mas considere escolher um diferente!")
-                if st.button("Ver Lista de Cartas", key=f"ver_cat_{nome_cat}"):
-                    precon_full = buscar_precon_por_nome(nome_cat)
-                    if precon_full:
-                        st.session_state.deck_precon_preview = precon_full
-                        st.session_state.deck_preview_context = f"catalogo_{nome_cat}"
-                    else:
-                        st.warning("Lista não encontrada.")
+
+                # Verifica se jogador logado tem perfil e se já tem este deck
+                jogador_logado_nome = next(
+                    (n for n, d in st.session_state.jogadores.items() if d["email"] == usuario_email),
+                    None
+                )
+                ja_tem_deck = jogador_logado_nome and nome_cat in st.session_state.jogadores.get(jogador_logado_nome, {}).get("decks", {})
+
+                col_ver_cat, col_vincular_cat = st.columns([1, 1])
+                with col_ver_cat:
+                    if st.button("Ver Lista de Cartas", key=f"ver_cat_{nome_cat}"):
+                        precon_full = buscar_precon_por_nome(nome_cat)
+                        if precon_full:
+                            st.session_state.deck_precon_preview = precon_full
+                            st.session_state.deck_preview_context = f"catalogo_{nome_cat}"
+                        else:
+                            st.warning("Lista não encontrada.")
+                with col_vincular_cat:
+                    if ja_tem_deck:
+                        st.info("Já vinculado ao seu perfil")
+                    elif jogador_logado_nome:
+                        if st.button("Vincular ao meu perfil", key=f"vincular_cat_{nome_cat}"):
+                            cmds = deck_cat.get("comandantes", [])
+                            cmd_p = cmds[0] if len(cmds) > 0 else "Desconhecido"
+                            cmd_s = cmds[1] if len(cmds) > 1 else ""
+                            cmd_a = cmds[2] if len(cmds) > 2 else ""
+                            novo_deck = {
+                                "comandante_primario": cmd_p,
+                                "comandante_secundario": cmd_s,
+                                "comandante_adicional": cmd_a,
+                                "url": ""
+                            }
+                            st.session_state.jogadores[jogador_logado_nome]["decks"][nome_cat] = novo_deck
+                            salvar_deck(jogador_logado_nome, nome_cat, novo_deck)
+                            st.success(f"Deck '{nome_cat}' vinculado ao seu perfil!")
+                            st.rerun()
+
                 ctx_cat = f"catalogo_{nome_cat}"
                 if st.session_state.get("deck_preview_context") == ctx_cat and st.session_state.deck_precon_preview:
                     precon = st.session_state.deck_precon_preview
