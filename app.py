@@ -251,7 +251,7 @@ def obter_nome_exibicao(dados_jogador, nome_chave):
 
 # --- FUNÇÃO: EXIBE LISTA DE CARTAS COM HOVER ---
 def exibir_lista_cartas(cartas):
-    import json as _json
+    import uuid as _uuid
 
     ordem_blocos = ["Comandante", "Criaturas", "Planeswalkers", "Mágicas Instantâneas",
                     "Feitiços", "Artefatos", "Encantamentos", "Batalhas", "Terrenos", "Outros"]
@@ -261,7 +261,7 @@ def exibir_lista_cartas(cartas):
         bloco = carta.get("tipo_bloco", "Outros") or "Outros"
         grupos.setdefault(bloco, []).append(carta)
 
-    # Imagem inicial = comandante, ou primeira carta com imagem
+    # Imagem inicial = comandante ou primeira carta com imagem
     img_inicial = ""
     nome_inicial = ""
     for bloco in ordem_blocos:
@@ -274,43 +274,61 @@ def exibir_lista_cartas(cartas):
         if img_inicial:
             break
 
+    # ID único para permitir múltiplas listas na mesma página
+    uid = _uuid.uuid4().hex[:8]
+
+    lista_html = ""
+    for bloco in ordem_blocos:
+        if bloco not in grupos:
+            continue
+        cartas_bloco = sorted(grupos[bloco], key=lambda c: c["nome"])
+        total = sum(c.get("quantidade", 1) for c in cartas_bloco)
+        lista_html += f'<div class="bloco-titulo-{uid}">{bloco} ({total})</div>'
+        lista_html += f'<div class="card-list-wrap-{uid}">'
+        for carta in cartas_bloco:
+            nome = carta["nome"].replace('"', '&quot;').replace("'", "&#39;")
+            qtd = carta.get("quantidade", 1)
+            img = carta.get("imagem_url", "").replace('"', '%22')
+            mana = carta.get("mana_cost", "")
+            mana_span = f'<span class="cmana-{uid}">{mana}</span>' if mana else ""
+            lista_html += (
+                f'<div class="ci-{uid}" data-img="{img}" data-nome="{nome}">' +
+                f'<span class="cqty-{uid}">{qtd}x</span>{nome}{mana_span}</div>'
+            )
+        lista_html += "</div>"
+
     html = f"""
 <style>
-.deck-viewer {{ display: flex; gap: 24px; align-items: flex-start; }}
-.deck-img-panel {{
-    position: sticky; top: 20px;
-    width: 220px; min-width: 220px;
-    flex-shrink: 0;
-}}
+.dv-{uid} {{ display: flex; gap: 24px; align-items: flex-start; }}
+.dip-{uid} {{ position: sticky; top: 20px; width: 220px; min-width: 220px; flex-shrink: 0; }}
 @media (max-width: 768px) {{
-    .deck-viewer {{ flex-direction: column; }}
-    .deck-img-panel {{ width: 100%; min-width: unset; position: static; }}
+    .dv-{uid} {{ flex-direction: column; }}
+    .dip-{uid} {{ width: 100%; min-width: unset; position: static; }}
 }}
-.deck-img-panel img {{
+.dip-{uid} img {{
     width: 100%; border-radius: 10px;
     box-shadow: 0 4px 20px rgba(0,0,0,0.6);
-    transition: opacity 0.15s ease;
 }}
-.deck-img-name {{
+.din-{uid} {{
     text-align: center; font-size: 12px; color: #aaa;
     margin-top: 6px; min-height: 18px;
 }}
-.deck-list-panel {{ flex: 1; min-width: 0; }}
-.card-list-wrap {{ column-count: 2; column-gap: 20px; }}
-@media (max-width: 768px) {{ .card-list-wrap {{ column-count: 1; }} }}
-.card-item {{
+.dlp-{uid} {{ flex: 1; min-width: 0; }}
+.card-list-wrap-{uid} {{ column-count: 2; column-gap: 20px; }}
+@media (max-width: 768px) {{ .card-list-wrap-{uid} {{ column-count: 1; }} }}
+.ci-{uid} {{
     display: block; padding: 3px 8px; margin: 2px 0;
-    border-radius: 4px; font-size: 14px; cursor: default;
+    border-radius: 4px; font-size: 14px; cursor: pointer;
     break-inside: avoid;
 }}
-.card-item:hover {{ background-color: rgba(255,255,255,0.08); }}
-.card-qty {{
+.ci-{uid}:hover {{ background-color: rgba(255,255,255,0.08); }}
+.cqty-{uid} {{
     display: inline-block; min-width: 24px; text-align: center;
     background: rgba(255,255,255,0.12); border-radius: 3px;
     margin-right: 6px; font-size: 12px; padding: 0 4px;
 }}
-.card-mana {{ font-size: 11px; color: #aaa; margin-left: 6px; }}
-.bloco-titulo {{
+.cmana-{uid} {{ font-size: 11px; color: #aaa; margin-left: 6px; }}
+.bloco-titulo-{uid} {{
     font-size: 13px; font-weight: bold; color: #888;
     text-transform: uppercase; letter-spacing: 1px;
     margin: 14px 0 4px 0; padding-bottom: 2px;
@@ -318,47 +336,40 @@ def exibir_lista_cartas(cartas):
     column-span: all;
 }}
 </style>
-<div class="deck-viewer">
-  <div class="deck-img-panel">
-    <img id="card-preview-img" src="{img_inicial}" alt="{nome_inicial}"/>
-    <div class="deck-img-name" id="card-preview-name">{nome_inicial}</div>
+<div class="dv-{uid}">
+  <div class="dip-{uid}">
+    <img id="img-{uid}" src="{img_inicial}" alt="{nome_inicial}"/>
+    <div class="din-{uid}" id="nome-{uid}">{nome_inicial}</div>
   </div>
-  <div class="deck-list-panel">
-"""
-
-    for bloco in ordem_blocos:
-        if bloco not in grupos:
-            continue
-        cartas_bloco = sorted(grupos[bloco], key=lambda c: c["nome"])
-        total = sum(c.get("quantidade", 1) for c in cartas_bloco)
-        html += f'<div class="bloco-titulo">{bloco} ({total})</div>'
-        html += '<div class="card-list-wrap">'
-        for carta in cartas_bloco:
-            nome = carta["nome"].replace('"', '&quot;')
-            qtd = carta.get("quantidade", 1)
-            img = carta.get("imagem_url", "").replace('"', '%22')
-            mana = carta.get("mana_cost", "")
-            mana_span = f'<span class="card-mana">{mana}</span>' if mana else ""
-            data_img = f'data-img="{img}"' if img else ""
-            data_nome = f'data-nome="{nome}"'
-            html += f'<div class="card-item" {data_img} {data_nome} onmouseenter="previewCard(this)"><span class="card-qty">{qtd}x</span>{nome}{mana_span}</div>'
-        html += "</div>"
-
-    html += """
+  <div class="dlp-{uid}">
+    {lista_html}
   </div>
 </div>
 <script>
-function previewCard(el) {
-    var img = el.getAttribute("data-img");
-    var nome = el.getAttribute("data-nome");
-    if (img) {
-        document.getElementById("card-preview-img").src = img;
-        document.getElementById("card-preview-img").alt = nome;
-    }
-    if (nome) {
-        document.getElementById("card-preview-name").textContent = nome;
-    }
-}
+(function() {{
+    function attachListeners() {{
+        var items = document.querySelectorAll('.ci-{uid}');
+        if (!items.length) {{
+            setTimeout(attachListeners, 200);
+            return;
+        }}
+        items.forEach(function(el) {{
+            el.addEventListener('mouseenter', function() {{
+                var img = this.getAttribute('data-img');
+                var nome = this.getAttribute('data-nome');
+                var imgEl = document.getElementById('img-{uid}');
+                var nomeEl = document.getElementById('nome-{uid}');
+                if (img && imgEl) imgEl.src = img;
+                if (nome && nomeEl) nomeEl.textContent = nome;
+            }});
+        }});
+    }}
+    if (document.readyState === 'loading') {{
+        document.addEventListener('DOMContentLoaded', attachListeners);
+    }} else {{
+        attachListeners();
+    }}
+}})();
 </script>
 """
     st.markdown(html, unsafe_allow_html=True)
