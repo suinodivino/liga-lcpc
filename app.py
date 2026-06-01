@@ -72,6 +72,13 @@ def tela_login():
                         st.session_state.usuario_email = user.email
                         st.session_state.is_admin = verificar_admin(user.email)
                         st.session_state.dados_carregados = False
+                        # Salva token para recuperar sessão após F5 (por usuário, sem conflito)
+                        try:
+                            sessao = sb.auth.get_session()
+                            if sessao and sessao.access_token:
+                                st.session_state.auth_token = sessao.access_token
+                        except:
+                            pass
                         st.rerun()
                     else:
                         st.error("E-mail ou senha incorretos.")
@@ -91,16 +98,18 @@ if "usuario_email" not in st.session_state:
 if "is_admin" not in st.session_state:
     st.session_state.is_admin = False
 
-# Tenta recuperar sessão ativa do Supabase (mantém login após F5)
+# Recupera sessão via token armazenado no session_state (seguro por usuário)
 if not st.session_state.usuario_logado:
-    try:
-        sessao = sb.auth.get_session()
-        if sessao and sessao.user:
-            st.session_state.usuario_logado = sessao.user
-            st.session_state.usuario_email = sessao.user.email
-            st.session_state.is_admin = verificar_admin(sessao.user.email)
-    except:
-        pass
+    token = st.session_state.get("auth_token")
+    if token:
+        try:
+            resp = sb.auth.get_user(token)
+            if resp and resp.user:
+                st.session_state.usuario_logado = resp.user
+                st.session_state.usuario_email = resp.user.email
+                st.session_state.is_admin = verificar_admin(resp.user.email)
+        except:
+            st.session_state.auth_token = None
 
 if not st.session_state.usuario_logado:
     tela_login()
