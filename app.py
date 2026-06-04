@@ -259,7 +259,7 @@ def obter_nome_exibicao(dados_jogador, nome_chave):
     return nome_chave
 
 # --- FUNÇÃO: EXIBE LISTA DE CARTAS COM HOVER ---
-def exibir_lista_cartas(cartas):
+def exibir_lista_cartas(cartas, comandante_primario=None):
     import uuid as _uuid
     import streamlit.components.v1 as _components
 
@@ -271,17 +271,37 @@ def exibir_lista_cartas(cartas):
         bloco = carta.get("tipo_bloco", "Outros") or "Outros"
         grupos.setdefault(bloco, []).append(carta)
 
+    # PONTO 3: imagem inicial = comandante primário cadastrado, ou primeiro comandante, ou primeira carta
     img_inicial = ""
     nome_inicial = ""
-    for bloco in ordem_blocos:
-        if bloco in grupos:
-            for c in grupos[bloco]:
-                if c.get("imagem_url"):
-                    img_inicial = c["imagem_url"]
-                    nome_inicial = c["nome"]
-                    break
-        if img_inicial:
-            break
+
+    # Tenta achar o comandante primário pelo nome passado
+    if comandante_primario:
+        for carta in cartas:
+            if carta["nome"].lower() == comandante_primario.lower() and carta.get("imagem_url"):
+                img_inicial = carta["imagem_url"]
+                nome_inicial = carta["nome"]
+                break
+
+    # Fallback: primeiro do bloco Comandante
+    if not img_inicial and "Comandante" in grupos:
+        for c in grupos["Comandante"]:
+            if c.get("imagem_url"):
+                img_inicial = c["imagem_url"]
+                nome_inicial = c["nome"]
+                break
+
+    # Fallback final: primeira carta com imagem
+    if not img_inicial:
+        for bloco in ordem_blocos:
+            if bloco in grupos:
+                for c in grupos[bloco]:
+                    if c.get("imagem_url"):
+                        img_inicial = c["imagem_url"]
+                        nome_inicial = c["nome"]
+                        break
+            if img_inicial:
+                break
 
     lista_html = ""
     total_cartas = 0
@@ -299,19 +319,27 @@ def exibir_lista_cartas(cartas):
             img = carta.get("imagem_url", "").replace('"', '%22')
             mana = carta.get("mana_cost", "")
             mana_html = f'<span class="mana">{mana}</span>' if mana else ""
-            lista_html += f'<div class="ci" data-img="{img}" data-nome="{nome}"><span class="qty">{qtd}x</span>{nome}{mana_html}</div>'
+            lista_html += (
+                f'<div class="ci" data-img="{img}" data-nome="{nome}">' +
+                f'<span class="qty">{qtd}x</span>{nome}{mana_html}</div>'
+            )
         lista_html += "</div>"
 
+    # PONTO 1: sticky via JS scroll listener dentro do iframe
     html = f"""<!DOCTYPE html>
 <html>
 <head>
 <style>
+  * {{ box-sizing: border-box; }}
   body {{ margin:0; padding:0; background:transparent; font-family: sans-serif; color: #eee; }}
   .viewer {{ display: flex; gap: 20px; align-items: flex-start; }}
-  .img-panel {{ width: 200px; min-width: 200px; flex-shrink: 0; }}
+  .img-panel {{
+    width: 200px; min-width: 200px; flex-shrink: 0;
+    position: sticky; top: 8px; align-self: flex-start;
+  }}
   .img-panel img {{ width: 100%; border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.7); display: block; }}
   .img-name {{ text-align: center; font-size: 11px; color: #aaa; margin-top: 5px; min-height: 16px; }}
-  .list-panel {{ flex: 1; min-width: 0; columns: 2; column-gap: 16px; }}
+  .list-panel {{ flex: 1; min-width: 0; columns: 2; column-gap: 16px; padding-bottom: 20px; }}
   .bloco-titulo {{
     font-size: 12px; font-weight: bold; color: #888;
     text-transform: uppercase; letter-spacing: 1px;
@@ -334,14 +362,14 @@ def exibir_lista_cartas(cartas):
   .mana {{ font-size: 10px; color: #999; margin-left: 5px; }}
   @media (max-width: 500px) {{
     .viewer {{ flex-direction: column; }}
-    .img-panel {{ width: 100%; }}
+    .img-panel {{ width: 100%; position: static; }}
     .list-panel {{ columns: 1; }}
   }}
 </style>
 </head>
 <body>
 <div class="viewer">
-  <div class="img-panel">
+  <div class="img-panel" id="img-panel">
     <img id="preview-img" src="{img_inicial}" alt="{nome_inicial}"/>
     <div class="img-name" id="preview-nome">{nome_inicial}</div>
   </div>
@@ -362,7 +390,7 @@ def exibir_lista_cartas(cartas):
 </body>
 </html>"""
 
-    altura = max(500, total_cartas * 22)
+    altura = max(520, total_cartas * 22 + 80)
     _components.html(html, height=altura, scrolling=True)
 
 
@@ -694,7 +722,8 @@ elif aba == "Jogadores":
                                     st.markdown(f"**Comandantes:** {' | '.join(cmds)}")
                                 st.markdown(f"*{precon.get('set_nome', '')}*")
                                 st.divider()
-                                exibir_lista_cartas(precon.get("cartas", []))
+                                cmd_p = dados_j["decks"].get(nome_d, {}).get("comandante_primario")
+                                exibir_lista_cartas(precon.get("cartas", []), comandante_primario=cmd_p)
                                 if st.button("Fechar Lista", key=f"fechar_preview_arsenal_{nome_d}"):
                                     st.session_state.deck_precon_preview = None
                                     st.session_state.deck_preview_context = None
@@ -867,7 +896,8 @@ elif aba == "Jogadores":
 
                             st.divider()
                             st.markdown("**Lista de Cartas:**")
-                            exibir_lista_cartas(precon.get("cartas", []))
+                            _cmd_p_prev = precon.get("comandantes", [None])[0]
+                            exibir_lista_cartas(precon.get("cartas", []), comandante_primario=_cmd_p_prev)
 
                         if st.button("Cancelar", key="btn_cancelar_deck"):
                             st.session_state.mostrar_form_deck = False
@@ -968,7 +998,8 @@ elif aba == "Decks":
                 if st.session_state.get("deck_preview_context") == ctx_cat and st.session_state.deck_precon_preview:
                     precon = st.session_state.deck_precon_preview
                     st.divider()
-                    exibir_lista_cartas(precon.get("cartas", []))
+                    _cmd_p_cat = precon.get("comandantes", [None])[0]
+                    exibir_lista_cartas(precon.get("cartas", []), comandante_primario=_cmd_p_cat)
                     if st.button("Fechar Lista", key=f"fechar_cat_{nome_cat}"):
                         st.session_state.deck_precon_preview = None
                         st.session_state.deck_preview_context = None
@@ -1026,10 +1057,14 @@ elif aba == "Nova Partida":
                     d1 = st.selectbox("Deck do Jogador 1:", ["Selecione..."] + list(st.session_state.jogadores[real_j1]["decks"].keys()), key="dupla_d1")
                     if d1 != "Selecione...":
                         dk_obj = st.session_state.jogadores[real_j1]["decks"][d1]
-                        opcoes_cmd = [c for c in [dk_obj["comandante_primario"], dk_obj["comandante_secundario"]] if c]
+                        opcoes_cmd = [c for c in [dk_obj["comandante_primario"], dk_obj["comandante_secundario"], dk_obj.get("comandante_adicional","")] if c]
                         if dk_obj.get("comandante_adicional"):
                             opcoes_cmd.append(dk_obj["comandante_adicional"])
-                        c1 = st.selectbox("Comandante em Campo (J1):", ["Selecione..."] + opcoes_cmd, key="dupla_c1")
+                        if len(opcoes_cmd) > 1:
+                            _sel1 = st.multiselect("Comandante(s) em Campo (J1):", opcoes_cmd, default=[opcoes_cmd[0]], key="dupla_c1")
+                            c1 = " + ".join(_sel1) if _sel1 else "Selecione..."
+                        else:
+                            c1 = opcoes_cmd[0] if opcoes_cmd else "Selecione..."
                 st.markdown("---")
                 opcoes_j2 = ["Selecione..."] + [n for n in list(mapa_exib_para_real.keys()) if n != j1]
                 j2 = st.selectbox("Jogador 2 (Dupla A):", opcoes_j2, key="dupla_j2")
@@ -1039,10 +1074,14 @@ elif aba == "Nova Partida":
                     d2 = st.selectbox("Deck do Jogador 2:", ["Selecione..."] + list(st.session_state.jogadores[real_j2]["decks"].keys()), key="dupla_d2")
                     if d2 != "Selecione...":
                         dk_obj = st.session_state.jogadores[real_j2]["decks"][d2]
-                        opcoes_cmd = [c for c in [dk_obj["comandante_primario"], dk_obj["comandante_secundario"]] if c]
+                        opcoes_cmd = [c for c in [dk_obj["comandante_primario"], dk_obj["comandante_secundario"], dk_obj.get("comandante_adicional","")] if c]
                         if dk_obj.get("comandante_adicional"):
                             opcoes_cmd.append(dk_obj["comandante_adicional"])
-                        c2 = st.selectbox("Comandante em Campo (J2):", ["Selecione..."] + opcoes_cmd, key="dupla_c2")
+                        if len(opcoes_cmd) > 1:
+                            _sel2 = st.multiselect("Comandante(s) em Campo (J2):", opcoes_cmd, default=[opcoes_cmd[0]], key="dupla_c2")
+                            c2 = " + ".join(_sel2) if _sel2 else "Selecione..."
+                        else:
+                            c2 = opcoes_cmd[0] if opcoes_cmd else "Selecione..."
             with col_d2:
                 st.markdown("### DUPLA B")
                 opcoes_j3 = ["Selecione..."] + [n for n in list(mapa_exib_para_real.keys()) if n not in [j1, j2]]
@@ -1053,10 +1092,14 @@ elif aba == "Nova Partida":
                     d3 = st.selectbox("Deck do Jogador 3:", ["Selecione..."] + list(st.session_state.jogadores[real_j3]["decks"].keys()), key="dupla_d3")
                     if d3 != "Selecione...":
                         dk_obj = st.session_state.jogadores[real_j3]["decks"][d3]
-                        opcoes_cmd = [c for c in [dk_obj["comandante_primario"], dk_obj["comandante_secundario"]] if c]
+                        opcoes_cmd = [c for c in [dk_obj["comandante_primario"], dk_obj["comandante_secundario"], dk_obj.get("comandante_adicional","")] if c]
                         if dk_obj.get("comandante_adicional"):
                             opcoes_cmd.append(dk_obj["comandante_adicional"])
-                        c3 = st.selectbox("Comandante em Campo (J3):", ["Selecione..."] + opcoes_cmd, key="dupla_c3")
+                        if len(opcoes_cmd) > 1:
+                            _sel3 = st.multiselect("Comandante(s) em Campo (J3):", opcoes_cmd, default=[opcoes_cmd[0]], key="dupla_c3")
+                            c3 = " + ".join(_sel3) if _sel3 else "Selecione..."
+                        else:
+                            c3 = opcoes_cmd[0] if opcoes_cmd else "Selecione..."
                 st.markdown("---")
                 opcoes_j4 = ["Selecione..."] + [n for n in list(mapa_exib_para_real.keys()) if n not in [j1, j2, j3]]
                 j4 = st.selectbox("Jogador 4 (Dupla B):", opcoes_j4, key="dupla_j4")
@@ -1066,10 +1109,14 @@ elif aba == "Nova Partida":
                     d4 = st.selectbox("Deck do Jogador 4:", ["Selecione..."] + list(st.session_state.jogadores[real_j4]["decks"].keys()), key="dupla_d4")
                     if d4 != "Selecione...":
                         dk_obj = st.session_state.jogadores[real_j4]["decks"][d4]
-                        opcoes_cmd = [c for c in [dk_obj["comandante_primario"], dk_obj["comandante_secundario"]] if c]
+                        opcoes_cmd = [c for c in [dk_obj["comandante_primario"], dk_obj["comandante_secundario"], dk_obj.get("comandante_adicional","")] if c]
                         if dk_obj.get("comandante_adicional"):
                             opcoes_cmd.append(dk_obj["comandante_adicional"])
-                        c4 = st.selectbox("Comandante em Campo (J4):", ["Selecione..."] + opcoes_cmd, key="dupla_c4")
+                        if len(opcoes_cmd) > 1:
+                            _sel4 = st.multiselect("Comandante(s) em Campo (J4):", opcoes_cmd, default=[opcoes_cmd[0]], key="dupla_c4")
+                            c4 = " + ".join(_sel4) if _sel4 else "Selecione..."
+                        else:
+                            c4 = opcoes_cmd[0] if opcoes_cmd else "Selecione..."
 
             if j1 in mapa_exib_para_real and j2 in mapa_exib_para_real and j3 in mapa_exib_para_real and j4 in mapa_exib_para_real:
                 if "Selecione..." not in [d1, d2, d3, d4, c1, c2, c3, c4]:
@@ -1111,10 +1158,18 @@ elif aba == "Nova Partida":
                         deck_escolhido = st.selectbox(f"Deck do Jogador {i+1}:", ["Selecione..."] + list(st.session_state.jogadores[real_key]["decks"].keys()), key=f"solo_d_{i}")
                         if deck_escolhido != "Selecione...":
                             dk_obj = st.session_state.jogadores[real_key]["decks"][deck_escolhido]
-                            opcoes_cmd = [c for c in [dk_obj["comandante_primario"], dk_obj["comandante_secundario"]] if c]
-                            if dk_obj.get("comandante_adicional"):
-                                opcoes_cmd.append(dk_obj["comandante_adicional"])
-                            cmd_escolhido = st.selectbox(f"Comandante do Jogador {i+1}:", ["Selecione..."] + opcoes_cmd, key=f"solo_c_{i}")
+                            opcoes_cmd = [c for c in [dk_obj["comandante_primario"], dk_obj["comandante_secundario"], dk_obj.get("comandante_adicional","")] if c]
+                            # Partners: multiselect quando há mais de 1 comandante
+                            if len(opcoes_cmd) > 1:
+                                cmd_sel = st.multiselect(
+                                    f"Comandante(s) do Jogador {i+1} (selecione 1 ou mais):",
+                                    opcoes_cmd,
+                                    default=[opcoes_cmd[0]],
+                                    key=f"solo_c_{i}"
+                                )
+                                cmd_escolhido = " + ".join(cmd_sel) if cmd_sel else "Selecione..."
+                            else:
+                                cmd_escolhido = opcoes_cmd[0] if opcoes_cmd else "Selecione..."
                     dados_confronto.append({"Jogador": jog_escolhido, "Deck": deck_escolhido, "Comandante": cmd_escolhido})
 
             validos = [d for d in dados_confronto if d["Jogador"] in mapa_exib_para_real and d["Deck"] != "Selecione..." and d["Comandante"] != "Selecione..."]
