@@ -263,37 +263,36 @@ def exibir_lista_cartas(cartas, comandante_primario=None):
     import uuid as _uuid
     import streamlit.components.v1 as _components
 
-    ordem_blocos = ["Comandante", "Criaturas", "Planeswalkers", "Mágicas Instantâneas",
-                    "Feitiços", "Artefatos", "Encantamentos", "Batalhas", "Terrenos", "Outros"]
+    ordem_blocos = ["Comandante", "Criaturas", "Planeswalkers", "Magicas Instantaneas",
+                    "Feiticos", "Artefatos", "Encantamentos", "Batalhas", "Terrenos", "Outros"]
+    ordem_blocos_display = {
+        "Magicas Instantaneas": "Mágicas Instantâneas",
+        "Feiticos": "Feitiços"
+    }
 
     grupos = {}
     for carta in cartas:
-        bloco = carta.get("tipo_bloco", "Outros") or "Outros"
+        bloco_orig = carta.get("tipo_bloco", "Outros") or "Outros"
+        # Normaliza para evitar problemas com acentos nas keys
+        bloco = bloco_orig.replace("Mágicas Instantâneas", "Magicas Instantaneas").replace("Feitiços", "Feiticos")
         grupos.setdefault(bloco, []).append(carta)
+    # Também aceita blocos já com acento
+    for carta in cartas:
+        bloco_orig = carta.get("tipo_bloco", "Outros") or "Outros"
+        if bloco_orig not in grupos:
+            grupos.setdefault(bloco_orig, []).append(carta)
 
-    # PONTO 3: imagem inicial = comandante primário cadastrado, ou primeiro comandante, ou primeira carta
+    # Imagem inicial = comandante primário
     img_inicial = ""
     nome_inicial = ""
-
-    # Tenta achar o comandante primário pelo nome passado
     if comandante_primario:
         for carta in cartas:
             if carta["nome"].lower() == comandante_primario.lower() and carta.get("imagem_url"):
                 img_inicial = carta["imagem_url"]
                 nome_inicial = carta["nome"]
                 break
-
-    # Fallback: primeiro do bloco Comandante
-    if not img_inicial and "Comandante" in grupos:
-        for c in grupos["Comandante"]:
-            if c.get("imagem_url"):
-                img_inicial = c["imagem_url"]
-                nome_inicial = c["nome"]
-                break
-
-    # Fallback final: primeira carta com imagem
     if not img_inicial:
-        for bloco in ordem_blocos:
+        for bloco in ["Comandante", "Criaturas"]:
             if bloco in grupos:
                 for c in grupos[bloco]:
                     if c.get("imagem_url"):
@@ -303,55 +302,51 @@ def exibir_lista_cartas(cartas, comandante_primario=None):
             if img_inicial:
                 break
 
-    lista_html = ""
-    total_cartas = 0
-    for bloco in ordem_blocos:
-        if bloco not in grupos:
-            continue
-        cartas_bloco = sorted(grupos[bloco], key=lambda c: c["nome"])
+    # Monta colunas esquerda e direita (blocos alternados)
+    blocos_existentes = [b for b in ordem_blocos if b in grupos or ordem_blocos_display.get(b, b) in grupos]
+    col_esq = blocos_existentes[:len(blocos_existentes)//2 + len(blocos_existentes)%2]
+    col_dir = blocos_existentes[len(blocos_existentes)//2 + len(blocos_existentes)%2:]
+
+    def render_bloco(bloco):
+        bloco_real = bloco if bloco in grupos else ordem_blocos_display.get(bloco, bloco)
+        if bloco_real not in grupos:
+            return ""
+        cartas_bloco = sorted(grupos[bloco_real], key=lambda c: c["nome"])
+        display = ordem_blocos_display.get(bloco, bloco_real)
         total = sum(c.get("quantidade", 1) for c in cartas_bloco)
-        total_cartas += total
-        lista_html += f'<div class="bloco-titulo">{bloco} ({total})</div>'
-        lista_html += '<div class="card-col">'
+        h = f'<div class="bloco-titulo">{display} ({total})</div>'
         for carta in cartas_bloco:
             nome = carta["nome"].replace('"', '&quot;').replace("'", "&#39;")
             qtd = carta.get("quantidade", 1)
             img = carta.get("imagem_url", "").replace('"', '%22')
             mana = carta.get("mana_cost", "")
             mana_html = f'<span class="mana">{mana}</span>' if mana else ""
-            lista_html += (
-                f'<div class="ci" data-img="{img}" data-nome="{nome}">' +
-                f'<span class="qty">{qtd}x</span>{nome}{mana_html}</div>'
-            )
-        lista_html += "</div>"
+            h += (f'<div class="ci" data-img="{img}" data-nome="{nome}">'
+                  f'<span class="qty">{qtd}x</span>{nome}{mana_html}</div>')
+        return h
 
-    # PONTO 1: sticky via JS scroll listener dentro do iframe
+    esq_html = "".join(render_bloco(b) for b in col_esq)
+    dir_html = "".join(render_bloco(b) for b in col_dir)
+    total_cartas = sum(c.get("quantidade", 1) for c in cartas)
+
     html = f"""<!DOCTYPE html>
 <html>
 <head>
 <style>
   * {{ box-sizing: border-box; }}
-  body {{ margin:0; padding:0; background:transparent; font-family: sans-serif; color: #eee; }}
-  .viewer {{ display: flex; gap: 20px; align-items: flex-start; }}
-  .img-panel {{
-    width: 200px; min-width: 200px; flex-shrink: 0;
-    position: sticky; top: 8px; align-self: flex-start;
-  }}
-  .img-panel img {{ width: 100%; border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.7); display: block; }}
-  .img-name {{ text-align: center; font-size: 11px; color: #aaa; margin-top: 5px; min-height: 16px; }}
-  .list-panel {{ flex: 1; min-width: 0; columns: 2; column-gap: 16px; padding-bottom: 20px; }}
+  body {{ margin:0; padding:8px; background:transparent; font-family: sans-serif; color: #eee; overflow-x: hidden; }}
+  .two-col {{ display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px; }}
+  @media (max-width: 500px) {{ .two-col {{ grid-template-columns: 1fr; }} }}
   .bloco-titulo {{
     font-size: 12px; font-weight: bold; color: #888;
     text-transform: uppercase; letter-spacing: 1px;
-    margin: 12px 0 3px 0; padding-bottom: 2px;
+    margin: 14px 0 3px 0; padding-bottom: 2px;
     border-bottom: 1px solid rgba(255,255,255,0.1);
-    break-inside: avoid; column-span: all;
   }}
-  .card-col {{ break-inside: avoid; }}
   .ci {{
-    display: block; padding: 2px 6px; margin: 1px 0;
+    display: block; padding: 2px 4px; margin: 1px 0;
     border-radius: 4px; font-size: 13px; cursor: pointer;
-    break-inside: avoid; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }}
   .ci:hover {{ background-color: rgba(255,255,255,0.1); }}
   .qty {{
@@ -359,38 +354,60 @@ def exibir_lista_cartas(cartas, comandante_primario=None):
     background: rgba(255,255,255,0.12); border-radius: 3px;
     margin-right: 5px; font-size: 11px; padding: 0 3px;
   }}
-  .mana {{ font-size: 10px; color: #999; margin-left: 5px; }}
-  @media (max-width: 500px) {{
-    .viewer {{ flex-direction: column; }}
-    .img-panel {{ width: 100%; position: static; }}
-    .list-panel {{ columns: 1; }}
+  .mana {{ font-size: 10px; color: #999; margin-left: 4px; }}
+
+  /* Tooltip flutuante que segue o mouse */
+  #card-float {{
+    display: none;
+    position: fixed;
+    z-index: 99999;
+    width: 220px;
+    pointer-events: none;
+    filter: drop-shadow(0 8px 24px rgba(0,0,0,0.8));
   }}
+  #card-float img {{ width: 220px; border-radius: 10px; }}
 </style>
 </head>
 <body>
-<div class="viewer">
-  <div class="img-panel" id="img-panel">
-    <img id="preview-img" src="{img_inicial}" alt="{nome_inicial}"/>
-    <div class="img-name" id="preview-nome">{nome_inicial}</div>
-  </div>
-  <div class="list-panel">
-    {lista_html}
-  </div>
+<div id="card-float"><img id="float-img" src="" alt=""/></div>
+<div class="two-col">
+  <div class="col-esq">{esq_html}</div>
+  <div class="col-dir">{dir_html}</div>
 </div>
 <script>
+  var floatEl = document.getElementById('card-float');
+  var floatImg = document.getElementById('float-img');
+  var lastImg = '{img_inicial}';
+
+  document.addEventListener('mousemove', function(e) {{
+    if (floatEl.style.display === 'block') {{
+      var x = e.clientX + 16;
+      var y = e.clientY - 110;
+      if (x + 220 > window.innerWidth) x = e.clientX - 236;
+      if (y < 8) y = 8;
+      floatEl.style.left = x + 'px';
+      floatEl.style.top = y + 'px';
+    }}
+  }});
+
   document.querySelectorAll('.ci').forEach(function(el) {{
     el.addEventListener('mouseenter', function() {{
       var img = this.dataset.img;
-      var nome = this.dataset.nome;
-      if (img) document.getElementById('preview-img').src = img;
-      document.getElementById('preview-nome').textContent = nome || '';
+      if (img) {{
+        floatImg.src = img;
+        lastImg = img;
+        floatEl.style.display = 'block';
+      }}
+    }});
+    el.addEventListener('mouseleave', function() {{
+      floatEl.style.display = 'none';
     }});
   }});
 </script>
 </body>
 </html>"""
 
-    altura = max(520, total_cartas * 22 + 80)
+    altura = max(400, total_cartas * 19 + 120)
     _components.html(html, height=altura, scrolling=True)
 
 
@@ -746,23 +763,26 @@ elif aba == "Jogadores":
                                     ]
 
                                 if lendarias:
-                                    # Selectbox com lendárias disponíveis
+                                    # Monta defaults a partir dos valores já salvos
                                     cmd_p_atual = dados_dk_edit.get("comandante_primario", "")
                                     cmd_s_atual = dados_dk_edit.get("comandante_secundario", "")
                                     cmd_a_atual = dados_dk_edit.get("comandante_adicional", "")
+                                    # Junta todos os comandantes atuais em uma lista de defaults
+                                    defaults_atuais = [c for c in [cmd_p_atual, cmd_s_atual, cmd_a_atual] if c and c in lendarias]
+                                    if not defaults_atuais and lendarias:
+                                        defaults_atuais = [lendarias[0]]
 
-                                    idx_p = lendarias.index(cmd_p_atual) if cmd_p_atual in lendarias else 0
-                                    edit_cmd_p = st.selectbox("Comandante Primário*", lendarias, index=idx_p, key=f"edit_cmd_p_{_ke}")
-
-                                    opcoes_s = ["(Nenhum)"] + [l for l in lendarias if l != edit_cmd_p]
-                                    idx_s = opcoes_s.index(cmd_s_atual) if cmd_s_atual in opcoes_s else 0
-                                    edit_cmd_s_sel = st.selectbox("Comandante Secundário (Opcional)", opcoes_s, index=idx_s, key=f"edit_cmd_s_{_ke}")
-                                    edit_cmd_s = "" if edit_cmd_s_sel == "(Nenhum)" else edit_cmd_s_sel
-
-                                    opcoes_a = ["(Nenhum)"] + [l for l in lendarias if l not in [edit_cmd_p, edit_cmd_s]]
-                                    idx_a = opcoes_a.index(cmd_a_atual) if cmd_a_atual in opcoes_a else 0
-                                    edit_cmd_a_sel = st.selectbox("Comandante Adicional (Opcional)", opcoes_a, index=idx_a, key=f"edit_cmd_a_{_ke}")
-                                    edit_cmd_a = "" if edit_cmd_a_sel == "(Nenhum)" else edit_cmd_a_sel
+                                    st.markdown("**Selecione os comandantes** (1 = primário, 2 = partner, 3 = adicional):")
+                                    cmds_selecionados = st.multiselect(
+                                        "Comandantes (até 3):",
+                                        lendarias,
+                                        default=defaults_atuais,
+                                        max_selections=3,
+                                        key=f"edit_cmds_{_ke}"
+                                    )
+                                    edit_cmd_p = cmds_selecionados[0] if len(cmds_selecionados) > 0 else ""
+                                    edit_cmd_s = cmds_selecionados[1] if len(cmds_selecionados) > 1 else ""
+                                    edit_cmd_a = cmds_selecionados[2] if len(cmds_selecionados) > 2 else ""
                                 else:
                                     # Fallback para texto livre se não encontrar lendárias
                                     edit_cmd_p = st.text_input("Comandante Primário*", value=dados_dk_edit.get("comandante_primario", ""), key=f"edit_cmd_p_{_ke}")
@@ -784,7 +804,7 @@ elif aba == "Jogadores":
                                             st.success(f"Deck '{nome_d}' atualizado!")
                                             st.rerun()
                                         else:
-                                            st.error("Comandante Primário é obrigatório.")
+                                            st.error("Selecione pelo menos um comandante.")
                                 with col_c:
                                     if st.button("Cancelar", key=f"cancelar_edit_dk_{_ke}"):
                                         st.session_state[f"editando_deck_{nome_d}"] = False
@@ -1285,12 +1305,34 @@ elif aba == "Ranking":
                             deck_raw = item.get("Deck", "")
                             deck_nome = deck_raw.split(" (")[0] if " (" in deck_raw else deck_raw
                             cmd_atual = deck_raw.split(" (")[1].replace(")", "") if " (" in deck_raw else ""
-                            novo_cmd = st.text_input(
-                                f"{item['Jogador']} — {deck_nome}",
-                                value=cmd_atual,
-                                key=f"edit_cmd_{row['ID']}_{idx}"
-                            )
-                            novos_comandantes[idx] = novo_cmd
+                            # Busca lendárias do deck para o multiselect
+                            precon_rank = buscar_precon_por_nome(deck_nome)
+                            lendarias_rank = []
+                            if precon_rank:
+                                lendarias_rank = [
+                                    c["nome"] for c in precon_rank.get("cartas", [])
+                                    if "legendary" in c.get("type_line", "").lower()
+                                ]
+                            if lendarias_rank:
+                                # Defaults: comandantes já salvos (podem ser "A + B")
+                                cmds_atuais = [c.strip() for c in cmd_atual.split("+") if c.strip() in lendarias_rank]
+                                if not cmds_atuais and lendarias_rank:
+                                    cmds_atuais = [lendarias_rank[0]]
+                                sel = st.multiselect(
+                                    f"{item['Jogador']} — {deck_nome}",
+                                    lendarias_rank,
+                                    default=cmds_atuais,
+                                    max_selections=3,
+                                    key=f"edit_cmd_{row['ID']}_{idx}"
+                                )
+                                novos_comandantes[idx] = " + ".join(sel) if sel else cmd_atual
+                            else:
+                                novo_cmd = st.text_input(
+                                    f"{item['Jogador']} — {deck_nome}",
+                                    value=cmd_atual,
+                                    key=f"edit_cmd_{row['ID']}_{idx}"
+                                )
+                                novos_comandantes[idx] = novo_cmd
 
                         col_salvar, col_cancelar, _ = st.columns([1, 1, 4])
                         with col_salvar:
@@ -1298,7 +1340,7 @@ elif aba == "Ranking":
                                 for idx, item in enumerate(detalhes_editados):
                                     deck_raw = item.get("Deck", "")
                                     deck_nome = deck_raw.split(" (")[0] if " (" in deck_raw else deck_raw
-                                    novo_cmd = novos_comandantes[idx].strip()
+                                    novo_cmd = novos_comandantes[idx]
                                     detalhes_editados[idx]["Deck"] = f"{deck_nome} ({novo_cmd})" if novo_cmd else deck_nome
                                 sb.table("partidas").update({"detalhes": detalhes_editados}).eq("id", int(row["ID"])).execute()
                                 st.session_state.dados_carregados = False
