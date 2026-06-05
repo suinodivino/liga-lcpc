@@ -423,10 +423,17 @@ if logo_encontrada:
     st.sidebar.image(logo_encontrada, use_container_width=True)
 
 # Info do usuário logado na sidebar
+# Busca apelido/nome do jogador logado
+_nome_sidebar = usuario_email
+for _n, _d in st.session_state.jogadores.items():
+    if _d.get("email") == usuario_email:
+        _nome_sidebar = _d.get("apelido") or _n
+        break
+
 st.sidebar.markdown("---")
-st.sidebar.markdown(f"👤 **{usuario_email}**")
+st.sidebar.markdown(f"**{_nome_sidebar}**")
 if is_admin:
-    st.sidebar.markdown("🔑 *Administrador*")
+    st.sidebar.markdown("*Administrador*")
 if st.sidebar.button("Sair", use_container_width=True):
     fazer_logout()
 
@@ -1175,21 +1182,61 @@ elif aba == "Nova Partida":
                     if jog_escolhido in mapa_exib_para_real:
                         selecionados_nomes.append(jog_escolhido)
                         real_key = mapa_exib_para_real[jog_escolhido]
-                        deck_escolhido = st.selectbox(f"Deck do Jogador {i+1}:", ["Selecione..."] + list(st.session_state.jogadores[real_key]["decks"].keys()), key=f"solo_d_{i}")
-                        if deck_escolhido != "Selecione...":
-                            dk_obj = st.session_state.jogadores[real_key]["decks"][deck_escolhido]
-                            opcoes_cmd = [c for c in [dk_obj["comandante_primario"], dk_obj["comandante_secundario"], dk_obj.get("comandante_adicional","")] if c]
-                            # Partners: multiselect quando há mais de 1 comandante
+                        decks_jog = st.session_state.jogadores[real_key]["decks"]
+
+                        # Monta mapa comandante -> deck para seleção por comandante
+                        mapa_cmd_deck = {}
+                        for dk_nome, dk_info in decks_jog.items():
+                            for cmd in [dk_info.get("comandante_primario",""), dk_info.get("comandante_secundario",""), dk_info.get("comandante_adicional","")]:
+                                if cmd:
+                                    mapa_cmd_deck[cmd] = dk_nome
+
+                        todos_cmds = list(mapa_cmd_deck.keys())
+                        todos_decks = list(decks_jog.keys())
+
+                        # Seleção por comandante
+                        cmd_direto = st.selectbox(
+                            f"Comandante do Jogador {i+1}:",
+                            ["Selecione..."] + todos_cmds,
+                            key=f"solo_cmd_direto_{i}"
+                        )
+
+                        # Se escolheu comandante, auto-preenche o deck
+                        if cmd_direto != "Selecione...":
+                            deck_escolhido = mapa_cmd_deck.get(cmd_direto, "Selecione...")
+                            st.caption(f"Deck: **{deck_escolhido}**")
+                            cmd_escolhido = cmd_direto
+                            # Permite adicionar partners do mesmo deck
+                            dk_obj = decks_jog.get(deck_escolhido, {})
+                            opcoes_cmd = [c for c in [dk_obj.get("comandante_primario",""), dk_obj.get("comandante_secundario",""), dk_obj.get("comandante_adicional","")] if c]
                             if len(opcoes_cmd) > 1:
                                 cmd_sel = st.multiselect(
-                                    f"Comandante(s) do Jogador {i+1} (selecione 1 ou mais):",
-                                    opcoes_cmd,
-                                    default=[opcoes_cmd[0]],
+                                    f"Partners adicionais (opcional):",
+                                    [c for c in opcoes_cmd if c != cmd_direto],
+                                    default=[],
                                     key=f"solo_c_{i}"
                                 )
-                                cmd_escolhido = " + ".join(cmd_sel) if cmd_sel else "Selecione..."
-                            else:
-                                cmd_escolhido = opcoes_cmd[0] if opcoes_cmd else "Selecione..."
+                                if cmd_sel:
+                                    cmd_escolhido = " + ".join([cmd_direto] + cmd_sel)
+                        else:
+                            # Seleção tradicional por deck como fallback
+                            deck_escolhido = st.selectbox(
+                                f"Ou escolha pelo Deck:",
+                                ["Selecione..."] + todos_decks,
+                                key=f"solo_d_{i}"
+                            )
+                            if deck_escolhido != "Selecione...":
+                                dk_obj = decks_jog[deck_escolhido]
+                                opcoes_cmd = [c for c in [dk_obj.get("comandante_primario",""), dk_obj.get("comandante_secundario",""), dk_obj.get("comandante_adicional","")] if c]
+                                if len(opcoes_cmd) > 1:
+                                    cmd_sel = st.multiselect(
+                                        f"Comandante(s) do Jogador {i+1}:",
+                                        opcoes_cmd, default=[opcoes_cmd[0]],
+                                        key=f"solo_c_{i}"
+                                    )
+                                    cmd_escolhido = " + ".join(cmd_sel) if cmd_sel else "Selecione..."
+                                else:
+                                    cmd_escolhido = opcoes_cmd[0] if opcoes_cmd else "Selecione..."
                     dados_confronto.append({"Jogador": jog_escolhido, "Deck": deck_escolhido, "Comandante": cmd_escolhido})
 
             validos = [d for d in dados_confronto if d["Jogador"] in mapa_exib_para_real and d["Deck"] != "Selecione..." and d["Comandante"] != "Selecione..."]
@@ -1234,10 +1281,11 @@ elif aba == "Ranking":
     st.header("Classificação e Estatísticas")
     if not st.session_state.partidas.empty:
         st.subheader("Filtros de Classificação")
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns(4)
         with c1: f_local = st.selectbox("Local:", ["TODOS", "PRESENCIAL", "SPELLTABLE"])
         with c2: f_modo = st.selectbox("Modo:", ["TODOS", "SOLO", "DRAGÃO DE DUAS CABEÇAS"])
         with c3: f_tipo = st.selectbox("Ranking por:", ["Competidor", "Deck", "Comandante"])
+        with c4: f_metrica = st.selectbox("Métrica:", ["Pontuação", "Vitórias"])
 
         df = st.session_state.partidas.copy()
         if f_local != "TODOS": df = df[df["Local"] == f_local]
@@ -1255,18 +1303,27 @@ elif aba == "Ranking":
                     else:
                         deck_nome = deck_raw
                         cmd_nome = "Desconhecido"
-                    dados_rank.append({"Competidor": nome_jogador, "Deck": deck_nome, "Comandante": cmd_nome, "Pontos": item.get("Pontos", 0)})
+                    dados_rank.append({
+                        "Competidor": nome_jogador,
+                        "Deck": deck_nome,
+                        "Comandante": cmd_nome,
+                        "Pontos": item.get("Pontos", 0),
+                        "Vitórias": 1 if item.get("Vencedor", False) else 0
+                    })
 
             df_rank = pd.DataFrame(dados_rank)
             coluna_escolhida = f_tipo
-            df_final = df_rank.groupby(coluna_escolhida)["Pontos"].sum().reset_index().sort_values("Pontos", ascending=False)
+            metrica_col = "Pontos" if f_metrica == "Pontuação" else "Vitórias"
+            df_final = df_rank.groupby(coluna_escolhida)[metrica_col].sum().reset_index().sort_values(metrica_col, ascending=False)
 
             import plotly.express as px
             st.divider()
-            fig = px.bar(df_final, x=coluna_escolhida, y="Pontos", color="Pontos",
-                         color_continuous_scale="Viridis",
-                         title=f"Ranking: {f_tipo} (Modo: {f_modo} | Local: {f_local})")
-            fig.update_layout(xaxis={'categoryorder': 'total descending'})
+            fig = px.bar(
+                df_final, x=coluna_escolhida, y=metrica_col, color=metrica_col,
+                color_continuous_scale="Viridis",
+                title=f"Ranking: {f_tipo} | {f_metrica} (Modo: {f_modo} | Local: {f_local})"
+            )
+            fig.update_layout(xaxis={"categoryorder": "total descending"})
             st.plotly_chart(fig, use_container_width=True)
             st.dataframe(df_final, use_container_width=True, hide_index=True)
         else:
@@ -1274,8 +1331,23 @@ elif aba == "Ranking":
 
         st.divider()
         st.subheader("Histórico de Partidas")
-        for _, row in st.session_state.partidas.iterrows():
-            with st.expander(f"Partida #{row['ID']} | {row['Local']} | {row['Modo']}"):
+
+        # Menu suspenso único para selecionar partida
+        opcoes_partidas = {
+            f"Partida #{row['ID']} | {row['Local']} | {row['Modo']}": row['ID']
+            for _, row in st.session_state.partidas.iterrows()
+        }
+        partida_sel_label = st.selectbox(
+            "Selecione uma partida para visualizar:",
+            ["Selecione..."] + list(opcoes_partidas.keys()),
+            key="sel_historico_partida"
+        )
+
+        if partida_sel_label != "Selecione...":
+            partida_id_sel = opcoes_partidas[partida_sel_label]
+            row = st.session_state.partidas[st.session_state.partidas["ID"] == partida_id_sel].iloc[0]
+
+            with st.container():
                 col_a, col_b, col_c = st.columns(3)
                 vencedores = [i["Jogador"] for i in row["Detalhes_Pontuacao"] if i["Vencedor"]]
                 col_a.metric("ID", row["ID"])
