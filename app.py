@@ -1233,6 +1233,83 @@ elif aba == "Nova Partida":
                 st.info("Aguardando a seleção de todos os 5 jogadores, decks e comandantes para liberar a classificação...")
 
         else:
+            selecionados_nomes = []
+            colunas_jogadores = st.columns(qtd_jogadores)
+            dados_confronto = []
+            for i in range(qtd_jogadores):
+                with colunas_jogadores[i]:
+                    st.markdown(f"#### Posição {i+1}")
+                    opcoes_filtradas = ["Selecione..."] + [n for n in list(mapa_exib_para_real.keys()) if n not in selecionados_nomes]
+                    jog_escolhido = st.selectbox(f"Jogador {i+1}:", opcoes_filtradas, key=f"solo_j_{i}")
+                    deck_escolhido = "Selecione..."
+                    cmd_escolhido = "Selecione..."
+                    if jog_escolhido in mapa_exib_para_real:
+                        selecionados_nomes.append(jog_escolhido)
+                        real_key = mapa_exib_para_real[jog_escolhido]
+                        decks_jog = st.session_state.jogadores[real_key]["decks"]
+                        mapa_cmd_dk = {}
+                        for dk_n, dk_i in decks_jog.items():
+                            for c in [dk_i.get("comandante_primario",""), dk_i.get("comandante_secundario",""), dk_i.get("comandante_adicional","")]:
+                                if c: mapa_cmd_dk[c] = dk_n
+                        cmd_direto = st.selectbox(f"Comandante do Jogador {i+1}:", ["Selecione..."] + list(mapa_cmd_dk.keys()), key=f"solo_cmd_direto_{i}")
+                        if cmd_direto != "Selecione...":
+                            deck_escolhido = mapa_cmd_dk.get(cmd_direto, "Selecione...")
+                            cmd_escolhido = cmd_direto
+                            st.caption(f"Deck: **{deck_escolhido}**")
+                            dk_obj = decks_jog.get(deck_escolhido, {})
+                            opcoes_cmd = [c for c in [dk_obj.get("comandante_primario",""), dk_obj.get("comandante_secundario",""), dk_obj.get("comandante_adicional","")] if c]
+                            if len(opcoes_cmd) > 1:
+                                cmd_sel = st.multiselect("Partners adicionais (opcional):", [c for c in opcoes_cmd if c != cmd_direto], default=[], key=f"solo_c_{i}")
+                                if cmd_sel:
+                                    cmd_escolhido = " + ".join([cmd_direto] + cmd_sel)
+                        else:
+                            deck_escolhido = st.selectbox(f"Ou escolha pelo Deck:", ["Selecione..."] + list(decks_jog.keys()), key=f"solo_d_{i}")
+                            if deck_escolhido != "Selecione...":
+                                dk_obj = decks_jog[deck_escolhido]
+                                opcoes_cmd = [c for c in [dk_obj.get("comandante_primario",""), dk_obj.get("comandante_secundario",""), dk_obj.get("comandante_adicional","")] if c]
+                                if len(opcoes_cmd) > 1:
+                                    cmd_sel = st.multiselect(f"Comandante(s) do Jogador {i+1}:", opcoes_cmd, default=[opcoes_cmd[0]], key=f"solo_c_{i}")
+                                    cmd_escolhido = " + ".join(cmd_sel) if cmd_sel else "Selecione..."
+                                else:
+                                    cmd_escolhido = opcoes_cmd[0] if opcoes_cmd else "Selecione..."
+                    dados_confronto.append({"Jogador": jog_escolhido, "Deck": deck_escolhido, "Comandante": cmd_escolhido})
+
+            validos = [d for d in dados_confronto if d["Jogador"] in mapa_exib_para_real and d["Deck"] != "Selecione..." and d["Comandante"] != "Selecione..."]
+            if len(validos) == qtd_jogadores:
+                st.divider()
+                st.subheader("Classificação Final da Partida Solo")
+                coloca_ordem = []
+                nomes_na_mesa = [d["Jogador"] for d in validos]
+                for pos in range(qtd_jogadores):
+                    opcoes_pos = ["Selecione..."] + [n for n in nomes_na_mesa if n not in coloca_ordem]
+                    txt_label = "1º Lugar (Campeão):" if pos == 0 else f"{pos+1}º Lugar:"
+                    escolha_colocacao = st.selectbox(txt_label, opcoes_pos, key=f"colocacao_pos_{pos}")
+                    if escolha_colocacao in nomes_na_mesa:
+                        coloca_ordem.append(escolha_colocacao)
+                if len(coloca_ordem) == qtd_jogadores:
+                    if st.button("Gravar Resultado Solo", key="btn_salvar_solo"):
+                        tabela_pontos = {
+                            "PRESENCIAL": {8:[400,350,300,250,200,150,100,50], 7:[400,350,300,250,200,150,100], 6:[400,350,300,250,200,150], 5:[400,300,200,100,50], 4:[400,300,200,100], 3:[200,100,50], 2:[100,50]},
+                            "SPELLTABLE": {8:[300,250,200,150,100,75,50,25], 7:[300,250,200,150,100,75,50], 6:[300,250,200,150,100,75], 5:[300,200,100,50,25], 4:[200,100,50,25], 3:[100,50,20], 2:[50,25]}
+                        }
+                        detalhes_finais = []
+                        for posicao_index, jog_nome in enumerate(coloca_ordem):
+                            config_mesa = next(d for d in validos if d["Jogador"] == jog_nome)
+                            pontos_obtidos = tabela_pontos[local_partida][qtd_jogadores][posicao_index]
+                            nome_deck_completo = f"{config_mesa['Deck']} ({config_mesa['Comandante']})"
+                            detalhes_finais.append({"Jogador": jog_nome, "Deck": nome_deck_completo, "Pontos": pontos_obtidos, "Vencedor": posicao_index == 0})
+                        novo_id = salvar_partida(local_partida, modo_partida, qtd_jogadores, detalhes_finais)
+                        nova_linha = pd.DataFrame([{"ID": novo_id, "Local": local_partida, "Modo": modo_partida, "Jogadores": qtd_jogadores, "Detalhes_Pontuacao": detalhes_finais}])
+                        st.session_state.partidas = pd.concat([st.session_state.partidas, nova_linha], ignore_index=True)
+                        for i in range(qtd_jogadores):
+                            for key in [f"solo_j_{i}", f"solo_d_{i}", f"solo_c_{i}", f"solo_cmd_direto_{i}"]:
+                                if key in st.session_state: del st.session_state[key]
+                        for pos in range(qtd_jogadores):
+                            if f"colocacao_pos_{pos}" in st.session_state: del st.session_state[f"colocacao_pos_{pos}"]
+                        st.session_state.mensagem_sucesso_partida = "Resultado Solo gravado com sucesso!"
+                        st.rerun()
+            else:
+                st.info("Aguardando a seleção de todos os competidores, decks e comandantes ativos para liberar a classificação...")
 
 # ===================== RANKING =====================
 elif aba == "Ranking":
