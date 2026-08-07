@@ -200,6 +200,23 @@ def cor_ranking(pos, total=185):
         return "#FFFFFF"   # Branco
     return "#FF4444"       # Vermelho
 
+def emoji_ranking(pos, total=185):
+    """Retorna emoji colorido para usar no título do expander."""
+    if pos is None:
+        return ""
+    if pos == 1:
+        return "🥇"
+    if pos == 2:
+        return "🥈"
+    if pos == 3:
+        return "🥉"
+    media = total // 2 + 1
+    if pos < media:
+        return "🟢"
+    if pos == media:
+        return "⚪"
+    return "🔴"
+
 def badge_ranking(pos, total=185):
     """Retorna HTML do badge de ranking colorido."""
     if pos is None:
@@ -1032,7 +1049,8 @@ elif aba == "Decks":
             cmds_cat = deck_cat.get("comandantes", [])
             donos = nomes_decks_escolhidos.get(nome_cat, [])
             rank_cat = deck_cat.get("ranking")
-            rank_label = f" | Rank #{rank_cat}" if rank_cat else ""
+            emoji = emoji_ranking(rank_cat)
+            rank_label = f" {emoji} Rank #{rank_cat}" if rank_cat else ""
             if donos:
                 label_expander = f"{nome_cat.upper()}{rank_label} — ⚠️ Já escolhido por: {', '.join(donos)}"
             else:
