@@ -176,12 +176,37 @@ def carregar_dados():
 
 @st.cache_data(ttl=3600)
 def carregar_catalogo():
-    dados = sb.table("catalogo_precons").select("id, nome, comandantes, set_nome, data_lancamento, cartas").execute().data
+    dados = sb.table("catalogo_precons").select("id, nome, comandantes, set_nome, data_lancamento, cartas, ranking, pontuacao_rank").execute().data
     return dados if dados else []
 
 def buscar_precon_por_nome(nome_deck):
     resultado = sb.table("catalogo_precons").select("*").eq("nome", nome_deck).execute().data
     return resultado[0] if resultado else None
+
+def cor_ranking(pos, total=185):
+    """Retorna a cor HTML baseada na posição do ranking."""
+    if pos is None:
+        return "#888888"
+    if pos == 1:
+        return "#FFD700"   # Dourado
+    if pos == 2:
+        return "#C0C0C0"   # Prateado
+    if pos == 3:
+        return "#CD7F32"   # Bronze
+    media = total // 2 + 1  # posição 93
+    if pos < media:
+        return "#00CC66"   # Verde
+    if pos == media:
+        return "#FFFFFF"   # Branco
+    return "#FF4444"       # Vermelho
+
+def badge_ranking(pos, total=185):
+    """Retorna HTML do badge de ranking colorido."""
+    if pos is None:
+        return ""
+    cor = cor_ranking(pos, total)
+    return f'<span style="color:{cor}; font-weight:bold; font-size:12px;">Rank #{pos}</span>'
+
 
 # --- FUNÇÕES DE ESCRITA ---
 def criar_conta_jogador(email, senha):
@@ -705,6 +730,11 @@ elif aba == "Jogadores":
                         if info_d.get("comandante_adicional"):
                             cmd_str += f" | Adicional: {info_d['comandante_adicional']}"
 
+                        # Busca ranking do deck
+                        _rank_info = sb.table("catalogo_precons").select("ranking").eq("nome", nome_d).execute().data
+                        _rank_pos = _rank_info[0]["ranking"] if _rank_info else None
+                        _badge = badge_ranking(_rank_pos)
+
                         # Botões inline por deck
                         if pode_editar:
                             col_dk, col_ver, col_edit, col_del = st.columns([3, 1, 1, 1])
@@ -712,7 +742,7 @@ elif aba == "Jogadores":
                             col_dk, col_ver = st.columns([4, 1])
 
                         with col_dk:
-                            st.markdown(f"**{nome_d.upper()}**  \n{cmd_str}")
+                            st.markdown(f"**{nome_d.upper()}** {_badge}  \n{cmd_str}", unsafe_allow_html=True)
                         with col_ver:
                             if st.button("Ver", key=f"ver_lista_{jogador_real}_{nome_d}"):
                                 if st.session_state.get("deck_preview_context") == f"arsenal_{nome_d}":
@@ -884,6 +914,12 @@ elif aba == "Jogadores":
                         if st.session_state.get("deck_preview_context") == "cadastro" and st.session_state.deck_precon_preview:
                             precon = st.session_state.deck_precon_preview
                             st.divider()
+                            _rank_prev = precon.get("ranking")
+                            _pts_prev = precon.get("pontuacao_rank")
+                            if _rank_prev:
+                                _cor_prev = cor_ranking(_rank_prev)
+                                _pts_str = f" ({_pts_prev:.0f} pts)" if _pts_prev else ""
+                                st.markdown(f'<span style="color:{_cor_prev}; font-weight:bold; font-size:14px;">★ Rank #{_rank_prev}{_pts_str}</span>', unsafe_allow_html=True)
                             st.markdown(f"### {precon['nome']}")
                             cmds = precon.get("comandantes", [])
                             if cmds:
@@ -960,11 +996,32 @@ elif aba == "Decks":
     st.subheader("Decks Precons")
     catalogo = carregar_catalogo()
     if catalogo:
-        # Remove versões Collector's Edition (duplicatas sem diferença de lista)
+        # Remove versões Collector's Edition
         catalogo = [d for d in catalogo if "collector" not in d["nome"].lower()]
-        # Ordena do mais novo para o mais antigo
-        catalogo = sorted(catalogo, key=lambda d: d.get("data_lancamento", ""), reverse=True)
-        busca_catalogo = st.text_input("Filtrar catálogo:", placeholder="Digite para filtrar...", key="filtro_catalogo")
+
+        # Ordenação
+        col_ord, col_busca = st.columns([1, 2])
+        with col_ord:
+            ordenacao = st.selectbox(
+                "Ordenar por:",
+                ["Lançamento (mais novo)", "Lançamento (mais antigo)", "Alfabético (A-Z)", "Alfabético (Z-A)", "Ranking (melhor)", "Ranking (pior)"],
+                key="ord_catalogo"
+            )
+        with col_busca:
+            busca_catalogo = st.text_input("Filtrar catálogo:", placeholder="Digite para filtrar...", key="filtro_catalogo")
+
+        if ordenacao == "Lançamento (mais novo)":
+            catalogo = sorted(catalogo, key=lambda d: d.get("data_lancamento", ""), reverse=True)
+        elif ordenacao == "Lançamento (mais antigo)":
+            catalogo = sorted(catalogo, key=lambda d: d.get("data_lancamento", ""))
+        elif ordenacao == "Alfabético (A-Z)":
+            catalogo = sorted(catalogo, key=lambda d: d["nome"])
+        elif ordenacao == "Alfabético (Z-A)":
+            catalogo = sorted(catalogo, key=lambda d: d["nome"], reverse=True)
+        elif ordenacao == "Ranking (melhor)":
+            catalogo = sorted(catalogo, key=lambda d: d.get("ranking") or 9999)
+        elif ordenacao == "Ranking (pior)":
+            catalogo = sorted(catalogo, key=lambda d: d.get("ranking") or 0, reverse=True)
         catalogo_filtrado = catalogo
         if busca_catalogo.strip():
             catalogo_filtrado = [d for d in catalogo if busca_catalogo.strip().lower() in d["nome"].lower()]
@@ -974,11 +1031,19 @@ elif aba == "Decks":
             nome_cat = deck_cat["nome"]
             cmds_cat = deck_cat.get("comandantes", [])
             donos = nomes_decks_escolhidos.get(nome_cat, [])
+            rank_cat = deck_cat.get("ranking")
+            rank_label = f" | Rank #{rank_cat}" if rank_cat else ""
             if donos:
-                label_expander = f"{nome_cat.upper()} — ⚠️ Já escolhido por: {', '.join(donos)}"
+                label_expander = f"{nome_cat.upper()}{rank_label} — ⚠️ Já escolhido por: {', '.join(donos)}"
             else:
-                label_expander = f"{nome_cat.upper()}"
+                label_expander = f"{nome_cat.upper()}{rank_label}"
             with st.expander(label_expander):
+                # Badge de ranking colorido
+                if rank_cat:
+                    cor = cor_ranking(rank_cat)
+                    pts = deck_cat.get("pontuacao_rank", "")
+                    pts_str = f" ({pts:.0f} pts)" if pts else ""
+                    st.markdown(f'<span style="color:{cor}; font-weight:bold; font-size:14px;">★ Rank #{rank_cat}{pts_str}</span>', unsafe_allow_html=True)
                 if cmds_cat:
                     st.markdown(f"**Comandantes:** {' | '.join(cmds_cat)}")
                 st.markdown(f"*{deck_cat.get('set_nome', '')}*")
