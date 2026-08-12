@@ -50,11 +50,6 @@ def tela_login():
             logo_path = nome_arquivo
             break
 
-    if logo_path:
-        _, col_logo, _ = st.columns([1, 2, 1])
-        with col_logo:
-            st.image(logo_path, use_container_width=True)
-
     st.markdown("<br>", unsafe_allow_html=True)
 
     col_texto, col_form = st.columns([3, 2], gap="large")
@@ -83,6 +78,12 @@ Um abraço,<br>
 """, unsafe_allow_html=True)
 
     with col_form:
+        if logo_path:
+            _, col_logo, _ = st.columns([1, 3, 1])
+            with col_logo:
+                st.image(logo_path, use_container_width=True)
+            st.markdown("<br>", unsafe_allow_html=True)
+
         with st.form("form_login"):
             email = st.text_input("E-mail", placeholder="seu@email.com")
             senha = st.text_input("Senha", type="password", placeholder="••••••••")
