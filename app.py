@@ -84,6 +84,31 @@ def tela_login():
                         st.error("E-mail ou senha incorretos.")
 
     st.markdown("<br><br>", unsafe_allow_html=True)
+    _, col_center_texto, _ = st.columns([1, 2, 1])
+    with col_center_texto:
+        st.markdown("""
+Commander sempre foi mais do que cartas na mesa. É conversa atravessando a partida, jogadas improváveis, alianças que duram três turnos e promessas quebradas no quarto. É competição, claro, mas também é encontro.
+
+Esta liga nasceu com uma proposta simples: colocar as pessoas no centro da experiência.
+
+Por isso, nossas partidas são focadas em decks pré-construídos (precons). A ideia não é eliminar estratégia, habilidade ou criatividade. A ideia é criar um ponto de partida mais equilibrado, onde a diferença não esteja em quem investiu mais, encontrou a carta mais rara ou montou a combinação mais explosiva.
+
+Quando todos começam próximos do mesmo nível, algo interessante acontece: o foco volta para a mesa.
+
+Aqui, a política do Commander ganha espaço. As decisões importam. As histórias aparecem. Cada partida vira uma experiência diferente, porque são os jogadores que constroem o jogo, não apenas os decks.
+Nossa liga existe para reunir pessoas que gostam de Magic, mas também valorizam o "Gathering" que vive dentro dele.
+
+Então escolha seu comandante, embaralhe seu precon, compre sete cartas e encontre seu lugar na mesa.
+A partida está começando.
+
+<br>
+Um abraço,<br>
+<strong>Adrian Malta.</strong>
+<br><br>
+<em>Mana, vai!</em>
+""", unsafe_allow_html=True)
+
+    st.markdown("<br><br>", unsafe_allow_html=True)
     st.markdown("""
 <div style='text-align:left; color:#444; font-size:12px; padding: 0 20px;'>
     Criado por <strong>Suíno Divino</strong>
@@ -482,8 +507,8 @@ if st.sidebar.button("Sair", use_container_width=True):
 with st.sidebar:
     aba = option_menu(
         menu_title=None,
-        options=["Home", "Cadastro", "Jogadores", "Decks", "Nova Partida", "Ranking"],
-        icons=["house", "person-plus", "people", "card-list", "controller", "trophy"],
+        options=["Statistics", "Cadastro", "Jogadores", "Decks", "Nova Partida"],
+        icons=["trophy", "person-plus", "people", "card-list", "controller"],
         menu_icon=None,
         default_index=0,
         styles={
@@ -499,38 +524,8 @@ with st.sidebar:
         }
     )
 
-# ===================== HOME =====================
-if aba == "Home":
-    container_home = st.container()
-    with container_home:
-        _, col_center, _ = st.columns([1, 2, 1])
-        with col_center:
-            if logo_encontrada:
-                st.image(logo_encontrada, width=455)
-            st.markdown("""
-Commander sempre foi mais do que cartas na mesa. É conversa atravessando a partida, jogadas improváveis, alianças que duram três turnos e promessas quebradas no quarto. É competição, claro, mas também é encontro.
-
-Esta liga nasceu com uma proposta simples: colocar as pessoas no centro da experiência.
-
-Por isso, nossas partidas são focadas em decks pré-construídos (precons). A ideia não é eliminar estratégia, habilidade ou criatividade. A ideia é criar um ponto de partida mais equilibrado, onde a diferença não esteja em quem investiu mais, encontrou a carta mais rara ou montou a combinação mais explosiva.
-
-Quando todos começam próximos do mesmo nível, algo interessante acontece: o foco volta para a mesa.
-
-Aqui, a política do Commander ganha espaço. As decisões importam. As histórias aparecem. Cada partida vira uma experiência diferente, porque são os jogadores que constroem o jogo, não apenas os decks.
-Nossa liga existe para reunir pessoas que gostam de Magic, mas também valorizam o "Gathering" que vive dentro dele.
-
-Então escolha seu comandante, embaralhe seu precon, compre sete cartas e encontre seu lugar na mesa.
-A partida está começando.
-
-<br>
-Um abraço,<br>
-<strong>Adrian Malta.</strong>
-<br><br>
-<em>Mana, vai!</em>
-""", unsafe_allow_html=True)
-
 # ===================== CADASTRO =====================
-elif aba == "Cadastro":
+if aba == "Cadastro":
     st.header("Gerenciamento de Perfis")
 
     # Abas visíveis dependem do nível de acesso
@@ -1394,8 +1389,8 @@ elif aba == "Nova Partida":
             else:
                 st.info("Aguardando a seleção de todos os competidores, decks e comandantes ativos para liberar a classificação...")
 
-# ===================== RANKING =====================
-elif aba == "Ranking":
+# ===================== STATISTICS =====================
+elif aba == "Statistics":
     st.header("Classificação e Estatísticas")
     if not st.session_state.partidas.empty:
         st.subheader("Filtros de Classificação")
