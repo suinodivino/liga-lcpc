@@ -50,13 +50,39 @@ def tela_login():
             logo_path = nome_arquivo
             break
 
-    _, col_center, _ = st.columns([1, 2, 1])
-    with col_center:
-        if logo_path:
-            _, col_logo, _ = st.columns([1, 2, 1])
-            with col_logo:
-                st.image(logo_path, use_container_width=True)
-        st.markdown("<br>", unsafe_allow_html=True)
+    if logo_path:
+        _, col_logo, _ = st.columns([1, 2, 1])
+        with col_logo:
+            st.image(logo_path, use_container_width=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    col_texto, col_form = st.columns([3, 2], gap="large")
+
+    with col_texto:
+        st.markdown("""
+Commander sempre foi mais do que cartas na mesa. É conversa atravessando a partida, jogadas improváveis, alianças que duram três turnos e promessas quebradas no quarto. É competição, claro, mas também é encontro.
+
+Esta liga nasceu com uma proposta simples: colocar as pessoas no centro da experiência.
+
+Por isso, nossas partidas são focadas em decks pré-construídos (precons). A ideia não é eliminar estratégia, habilidade ou criatividade. A ideia é criar um ponto de partida mais equilibrado, onde a diferença não esteja em quem investiu mais, encontrou a carta mais rara ou montou a combinação mais explosiva.
+
+Quando todos começam próximos do mesmo nível, algo interessante acontece: o foco volta para a mesa.
+
+Aqui, a política do Commander ganha espaço. As decisões importam. As histórias aparecem. Cada partida vira uma experiência diferente, porque são os jogadores que constroem o jogo, não apenas os decks.
+Nossa liga existe para reunir pessoas que gostam de Magic, mas também valorizam o "Gathering" que vive dentro dele.
+
+Então escolha seu comandante, embaralhe seu precon, compre sete cartas e encontre seu lugar na mesa.
+A partida está começando.
+
+<br>
+Um abraço,<br>
+<strong>Adrian Malta.</strong>
+<br><br>
+<em>Mana, vai!</em>
+""", unsafe_allow_html=True)
+
+    with col_form:
         with st.form("form_login"):
             email = st.text_input("E-mail", placeholder="seu@email.com")
             senha = st.text_input("Senha", type="password", placeholder="••••••••")
@@ -82,31 +108,6 @@ def tela_login():
                         st.rerun()
                     else:
                         st.error("E-mail ou senha incorretos.")
-
-    st.markdown("<br><br>", unsafe_allow_html=True)
-    _, col_center_texto, _ = st.columns([1, 2, 1])
-    with col_center_texto:
-        st.markdown("""
-Commander sempre foi mais do que cartas na mesa. É conversa atravessando a partida, jogadas improváveis, alianças que duram três turnos e promessas quebradas no quarto. É competição, claro, mas também é encontro.
-
-Esta liga nasceu com uma proposta simples: colocar as pessoas no centro da experiência.
-
-Por isso, nossas partidas são focadas em decks pré-construídos (precons). A ideia não é eliminar estratégia, habilidade ou criatividade. A ideia é criar um ponto de partida mais equilibrado, onde a diferença não esteja em quem investiu mais, encontrou a carta mais rara ou montou a combinação mais explosiva.
-
-Quando todos começam próximos do mesmo nível, algo interessante acontece: o foco volta para a mesa.
-
-Aqui, a política do Commander ganha espaço. As decisões importam. As histórias aparecem. Cada partida vira uma experiência diferente, porque são os jogadores que constroem o jogo, não apenas os decks.
-Nossa liga existe para reunir pessoas que gostam de Magic, mas também valorizam o "Gathering" que vive dentro dele.
-
-Então escolha seu comandante, embaralhe seu precon, compre sete cartas e encontre seu lugar na mesa.
-A partida está começando.
-
-<br>
-Um abraço,<br>
-<strong>Adrian Malta.</strong>
-<br><br>
-<em>Mana, vai!</em>
-""", unsafe_allow_html=True)
 
     st.markdown("<br><br>", unsafe_allow_html=True)
     st.markdown("""
