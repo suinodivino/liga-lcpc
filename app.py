@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 import re
+import base64
 from supabase import create_client
 from streamlit_option_menu import option_menu
 
@@ -328,9 +329,72 @@ def obter_nome_exibicao(dados_jogador, nome_chave):
     return nome_chave
 
 # --- FUNÇÃO: EXIBE LISTA DE CARTAS COM HOVER ---
-def exibir_lista_cartas(cartas, comandante_primario=None):
+def gerar_texto_deck(cartas, nome_deck=""):
+    """Monta a lista de cartas em formato texto padrão (qtd + nome), pronta
+    para download ou para colar em sites como Moxfield/Archidekt."""
+    linhas = []
+    if nome_deck:
+        linhas.append(f"// {nome_deck}")
+        linhas.append("")
+    cartas_ordenadas = sorted(cartas, key=lambda c: c.get("nome", ""))
+    for carta in cartas_ordenadas:
+        qtd = carta.get("quantidade", 1)
+        nome = carta.get("nome", "")
+        linhas.append(f"{qtd} {nome}")
+    return "\n".join(linhas)
+
+
+def botao_copiar_lista(texto, key):
+    """Renderiza um botão 'Copiar Lista' que copia o texto para a área de
+    transferência do usuário via JavaScript (clipboard API)."""
+    import streamlit.components.v1 as _components
+    b64 = base64.b64encode(texto.encode("utf-8")).decode("ascii")
+    html_code = f"""
+    <div>
+        <button id="btn_copy_{key}" style="
+            width:100%; padding:0.5rem 1rem; border-radius:8px;
+            border:1px solid rgba(250,250,250,0.2); background-color:transparent;
+            color:inherit; font-size:14px; cursor:pointer; font-family:inherit;">
+            📋 Copiar Lista
+        </button>
+    </div>
+    <script>
+        const btn_{key} = document.getElementById("btn_copy_{key}");
+        btn_{key}.addEventListener("click", function() {{
+            const decoded = atob("{b64}");
+            const bytes = Uint8Array.from(decoded, c => c.charCodeAt(0));
+            const texto = new TextDecoder("utf-8").decode(bytes);
+            navigator.clipboard.writeText(texto).then(function() {{
+                const original = btn_{key}.innerHTML;
+                btn_{key}.innerHTML = "✅ Copiado!";
+                setTimeout(function() {{ btn_{key}.innerHTML = original; }}, 1500);
+            }});
+        }});
+    </script>
+    """
+    _components.html(html_code, height=45)
+
+
+def exibir_lista_cartas(cartas, comandante_primario=None, nome_deck=""):
     import uuid as _uuid
     import streamlit.components.v1 as _components
+
+    if cartas:
+        texto_deck = gerar_texto_deck(cartas, nome_deck)
+        _key_base = re.sub(r"[^a-zA-Z0-9]", "_", nome_deck or str(_uuid.uuid4()))
+        col_dl, col_cp = st.columns(2)
+        with col_dl:
+            st.download_button(
+                "⬇️ Download Lista (.txt)",
+                data=texto_deck,
+                file_name=f"{(nome_deck or 'deck').strip().replace(' ', '_')}.txt",
+                mime="text/plain",
+                key=f"dl_{_key_base}",
+                use_container_width=True,
+            )
+        with col_cp:
+            botao_copiar_lista(texto_deck, key=_key_base)
+        st.markdown("<br>", unsafe_allow_html=True)
 
     ordem_blocos = ["Comandante", "Criaturas", "Planeswalkers", "Magicas Instantaneas",
                     "Feiticos", "Artefatos", "Encantamentos", "Batalhas", "Terrenos", "Outros"]
@@ -791,7 +855,7 @@ elif aba == "Jogadores":
                                 st.markdown(f"*{precon.get('set_nome', '')}*")
                                 st.divider()
                                 cmd_p = dados_j["decks"].get(nome_d, {}).get("comandante_primario")
-                                exibir_lista_cartas(precon.get("cartas", []), comandante_primario=cmd_p)
+                                exibir_lista_cartas(precon.get("cartas", []), comandante_primario=cmd_p, nome_deck=precon.get("nome", nome_d))
                                 if st.button("Fechar Lista", key=f"fechar_preview_arsenal_{nome_d}"):
                                     st.session_state.deck_precon_preview = None
                                     st.session_state.deck_preview_context = None
@@ -974,7 +1038,7 @@ elif aba == "Jogadores":
                             st.divider()
                             st.markdown("**Lista de Cartas:**")
                             _cmd_p_prev = precon.get("comandantes", [None])[0]
-                            exibir_lista_cartas(precon.get("cartas", []), comandante_primario=_cmd_p_prev)
+                            exibir_lista_cartas(precon.get("cartas", []), comandante_primario=_cmd_p_prev, nome_deck=precon.get("nome", ""))
 
                         if st.button("Cancelar", key="btn_cancelar_deck"):
                             st.session_state.mostrar_form_deck = False
@@ -1106,7 +1170,7 @@ elif aba == "Decks":
                     precon = st.session_state.deck_precon_preview
                     st.divider()
                     _cmd_p_cat = precon.get("comandantes", [None])[0]
-                    exibir_lista_cartas(precon.get("cartas", []), comandante_primario=_cmd_p_cat)
+                    exibir_lista_cartas(precon.get("cartas", []), comandante_primario=_cmd_p_cat, nome_deck=nome_cat)
                     if st.button("Fechar Lista", key=f"fechar_cat_{nome_cat}"):
                         st.session_state.deck_precon_preview = None
                         st.session_state.deck_preview_context = None
