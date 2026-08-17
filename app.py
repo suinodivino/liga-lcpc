@@ -3,6 +3,7 @@ import pandas as pd
 import os
 import re
 import base64
+import random
 from supabase import create_client
 from streamlit_option_menu import option_menu
 
@@ -334,6 +335,161 @@ def salvar_partida(local, modo, qtd_jogadores, detalhes):
 def excluir_partida_db(partida_id):
     sb.table("partidas").delete().eq("id", int(partida_id)).execute()
 
+# --- FUNÇÕES DE TORNEIOS (SUÍÇO EM MESAS DE 4 + MATA-MATA EM MESAS DE 4) ---
+TAMANHO_MESA = 4
+
+def carregar_torneios():
+    dados = sb.table("torneios").select("*").order("id", desc=True).execute().data
+    return dados if dados else []
+
+def carregar_participantes_torneio(torneio_id):
+    dados = sb.table("torneio_participantes").select("*").eq("torneio_id", torneio_id).order("id").execute().data
+    return dados if dados else []
+
+def carregar_confrontos_torneio(torneio_id):
+    dados = sb.table("torneio_confrontos").select("*").eq("torneio_id", torneio_id).order("id").execute().data
+    return dados if dados else []
+
+def criar_torneio(nome, modo_jogo, qtd_classificados, criado_por):
+    resp = sb.table("torneios").insert({
+        "nome": nome, "modo_jogo": modo_jogo, "formato": "SUICO_MESAS",
+        "qtd_classificados": qtd_classificados,
+        "status": "CONFIGURANDO", "criado_por": criado_por
+    }).execute()
+    return resp.data[0]["id"] if resp.data else None
+
+def adicionar_participante_torneio(torneio_id, jogador_nome, deck, comandante):
+    sb.table("torneio_participantes").insert({
+        "torneio_id": torneio_id, "jogador_nome": jogador_nome,
+        "deck_escolhido": deck, "comandante_escolhido": comandante
+    }).execute()
+
+def excluir_participante_torneio(participante_id):
+    sb.table("torneio_participantes").delete().eq("id", participante_id).execute()
+
+def atualizar_status_torneio(torneio_id, status):
+    sb.table("torneios").update({"status": status}).eq("id", torneio_id).execute()
+
+def criar_confronto(torneio_id, fase, rodada, jogadores_payload):
+    """jogadores_payload: lista de dicts {"jogador": nome, "eliminacoes": 0, "wo": False}"""
+    sb.table("torneio_confrontos").insert({
+        "torneio_id": torneio_id, "fase": fase, "rodada": rodada,
+        "jogadores": jogadores_payload, "vencedor": None, "status": "PENDENTE"
+    }).execute()
+
+def registrar_resultado_confronto(confronto_id, jogadores_payload, vencedor):
+    sb.table("torneio_confrontos").update({
+        "jogadores": jogadores_payload, "vencedor": vencedor, "status": "CONCLUIDO"
+    }).eq("id", confronto_id).execute()
+
+def excluir_torneio(torneio_id):
+    sb.table("torneio_confrontos").delete().eq("torneio_id", torneio_id).execute()
+    sb.table("torneio_participantes").delete().eq("torneio_id", torneio_id).execute()
+    sb.table("torneios").delete().eq("id", torneio_id).execute()
+
+def calcular_classificacao_suico(nomes_participantes, confrontos_fase):
+    """Calcula a tabela (Pts/V/Elim/J). Vitória = 3 pts. Eliminações servem só
+    como critério de desempate (não somam pontos)."""
+    tabela = {nome: {"Pts": 0, "V": 0, "Elim": 0, "J": 0} for nome in nomes_participantes}
+    for c in confrontos_fase:
+        if c.get("status") != "CONCLUIDO":
+            continue
+        venc = c.get("vencedor")
+        for info in c.get("jogadores", []):
+            nome = info.get("jogador")
+            if nome not in tabela or info.get("wo"):
+                continue
+            tabela[nome]["J"] += 1
+            tabela[nome]["Elim"] += info.get("eliminacoes", 0)
+            if nome == venc:
+                tabela[nome]["V"] += 1
+                tabela[nome]["Pts"] += 3
+    linhas = [{"Jogador": nome, **stats} for nome, stats in tabela.items()]
+    linhas.sort(key=lambda x: (-x["Pts"], -x["Elim"]))
+    return linhas
+
+def montar_mesas(nomes_ordenados, historico_pares, tamanho_mesa=TAMANHO_MESA):
+    """Monta as mesas de uma rodada a partir de uma lista já ordenada (por força,
+    no suíço, ou aleatória, na 1ª rodada). Tenta evitar que dois jogadores que já
+    se enfrentaram em rodadas anteriores caiam na mesma mesa. Se sobrar 1 jogador
+    isolado no final, ele é incorporado à mesa anterior (formando uma mesa de 5)."""
+    restantes = list(nomes_ordenados)
+    mesas = []
+    while restantes:
+        mesa = [restantes.pop(0)]
+        while len(mesa) < tamanho_mesa and restantes:
+            candidato_idx = None
+            for idx, jogador in enumerate(restantes):
+                if all(frozenset((jogador, m)) not in historico_pares for m in mesa):
+                    candidato_idx = idx
+                    break
+            if candidato_idx is None:
+                candidato_idx = 0
+            mesa.append(restantes.pop(candidato_idx))
+        mesas.append(mesa)
+    if len(mesas) >= 2 and len(mesas[-1]) == 1:
+        orfao = mesas.pop()[0]
+        mesas[-1].append(orfao)
+    return mesas
+
+def construir_historico_pares(confrontos_fase):
+    """Monta o conjunto de pares de jogadores que já dividiram mesa em rodadas anteriores."""
+    historico = set()
+    for c in confrontos_fase:
+        nomes = [info.get("jogador") for info in c.get("jogadores", [])]
+        for i in range(len(nomes)):
+            for j in range(i + 1, len(nomes)):
+                historico.add(frozenset((nomes[i], nomes[j])))
+    return historico
+
+def _contar_repeticoes_mesas(mesas, historico_pares):
+    total = 0
+    for mesa in mesas:
+        for i in range(len(mesa)):
+            for j in range(i + 1, len(mesa)):
+                if frozenset((mesa[i], mesa[j])) in historico_pares:
+                    total += 1
+    return total
+
+def gerar_rodada_classificatoria(participantes, confrontos_fase, numero_rodada, tentativas=150):
+    """Gera a próxima rodada da fase classificatória (suíço): a partir da 2ª
+    rodada, agrupa por pontuação atual (Pts, depois Elim). Faz várias tentativas
+    (com pequena variação) e fica com a que tiver menos jogadores repetidos na
+    mesma mesa — nem sempre dá pra zerar totalmente, dependendo da combinação
+    de jogadores/rodadas, mas minimiza ao máximo."""
+    historico = construir_historico_pares(confrontos_fase)
+    if numero_rodada == 1:
+        base_ordenada = list(participantes)
+    else:
+        tabela = calcular_classificacao_suico(participantes, confrontos_fase)
+        base_ordenada = [linha["Jogador"] for linha in tabela]
+
+    melhor_mesas, melhor_rep = None, None
+    for _ in range(tentativas):
+        ordenados = list(base_ordenada)
+        random.shuffle(ordenados)
+        mesas = montar_mesas(ordenados, historico)
+        rep = _contar_repeticoes_mesas(mesas, historico)
+        if melhor_rep is None or rep < melhor_rep:
+            melhor_rep, melhor_mesas = rep, mesas
+            if rep == 0:
+                break
+    return melhor_mesas
+
+def determinar_avancantes_mesa(confronto):
+    """Numa mesa concluída, retorna (1º colocado, 2º colocado) — o vencedor e,
+    entre os demais presentes, quem mais eliminou (critério de desempate)."""
+    venc = confronto.get("vencedor")
+    outros = [info for info in confronto.get("jogadores", []) if info.get("jogador") != venc and not info.get("wo")]
+    outros.sort(key=lambda info: -info.get("eliminacoes", 0))
+    segundo = outros[0]["jogador"] if outros else None
+    return venc, segundo
+
+def gerar_mesas_matamata(jogadores_avancando, tamanho_mesa=TAMANHO_MESA):
+    """Divide os classificados em mesas de 4 (chunks sequenciais, preservando o
+    seed de força quando a lista já vier ordenada por classificação)."""
+    return [jogadores_avancando[i:i + tamanho_mesa] for i in range(0, len(jogadores_avancando), tamanho_mesa)]
+
 # --- CARREGAMENTO INICIAL ---
 if "dados_carregados" not in st.session_state or not st.session_state.dados_carregados:
     st.session_state.jogadores, st.session_state.partidas = carregar_dados()
@@ -599,8 +755,8 @@ if st.sidebar.button("Sair", use_container_width=True):
 with st.sidebar:
     aba = option_menu(
         menu_title=None,
-        options=["Statistics", "Cadastro", "Jogadores", "Decks", "Nova Partida"],
-        icons=["trophy", "person-plus", "people", "card-list", "controller"],
+        options=["Statistics", "Cadastro", "Jogadores", "Decks", "Nova Partida", "Torneios"],
+        icons=["trophy", "person-plus", "people", "card-list", "controller", "diagram-3"],
         menu_icon=None,
         default_index=0,
         styles={
@@ -1724,3 +1880,343 @@ elif aba == "Statistics":
                                 st.rerun()
     else:
         st.info("Nenhuma partida registrada nesta temporada da liga ainda.")
+
+
+# ===================== TORNEIOS =====================
+elif aba == "Torneios":
+    st.header("Torneios — Mesas de 4 (Suíço + Mata-mata)")
+
+    torneios_existentes = carregar_torneios()
+    opcoes_torneio = ["➕ Criar Novo Torneio"] + [f"#{t['id']} {t['nome']} ({t['status']})" for t in torneios_existentes]
+    torneio_sel_label = st.selectbox("Torneio:", opcoes_torneio, key="torneio_selecionado")
+
+    if torneio_sel_label == "➕ Criar Novo Torneio":
+        st.subheader("Criar Novo Torneio")
+        st.caption("Todos os confrontos são mesas de 4 jogadores, cada um por si. Vitória = 3 pontos. Eliminações contam só como critério de desempate.")
+        with st.form("form_criar_torneio"):
+            nome_torneio = st.text_input("Nome do Torneio:")
+            modo_jogo_torneio = st.text_input("Rótulo do Modo de Jogo:", value="SOLO (mesas de 4)")
+            qtd_classificados_novo = st.selectbox(
+                "Classificados para o Mata-Mata:",
+                [4, 8, 16, 32],
+                index=1,
+                help="Depende de quantos jogadores vão se inscrever. 4 = final direta · 8 = semifinal · 16 = quartas · 32 = oitavas."
+            )
+            criar_btn = st.form_submit_button("Criar Torneio", type="primary")
+            if criar_btn:
+                if not nome_torneio.strip():
+                    st.error("Dê um nome ao torneio.")
+                else:
+                    criar_torneio(nome_torneio.strip(), modo_jogo_torneio.strip(), int(qtd_classificados_novo), st.session_state.usuario_email)
+                    st.success(f"Torneio '{nome_torneio}' criado! Selecione-o na lista acima para adicionar participantes.")
+                    st.rerun()
+    else:
+        torneio_id = int(torneio_sel_label.split(" ")[0].replace("#", ""))
+        torneio = next((t for t in torneios_existentes if t["id"] == torneio_id), None)
+        if not torneio:
+            st.error("Torneio não encontrado.")
+        else:
+            participantes = carregar_participantes_torneio(torneio_id)
+            confrontos = carregar_confrontos_torneio(torneio_id)
+            nomes_participantes = [p["jogador_nome"] for p in participantes]
+
+            col_tit, col_del = st.columns([5, 1])
+            with col_tit:
+                st.subheader(f"{torneio['nome']}  ·  Status: {torneio['status']}  ·  Classificados p/ mata-mata: {torneio['qtd_classificados']}")
+            with col_del:
+                if st.button("🗑️ Excluir", key=f"del_torneio_{torneio_id}"):
+                    st.session_state[f"confirmar_del_torneio_{torneio_id}"] = True
+            if st.session_state.get(f"confirmar_del_torneio_{torneio_id}", False):
+                st.warning("Tem certeza que deseja excluir este torneio e todos os seus dados? Essa ação não pode ser desfeita.")
+                c_sim, c_nao, _ = st.columns([1, 1, 4])
+                with c_sim:
+                    if st.button("Sim, excluir torneio", type="primary", key=f"sim_del_torneio_{torneio_id}"):
+                        excluir_torneio(torneio_id)
+                        del st.session_state[f"confirmar_del_torneio_{torneio_id}"]
+                        st.rerun()
+                with c_nao:
+                    if st.button("Cancelar", key=f"nao_del_torneio_{torneio_id}"):
+                        del st.session_state[f"confirmar_del_torneio_{torneio_id}"]
+                        st.rerun()
+
+            st.divider()
+
+            # ---------- FASE 1: CONFIGURANDO (adicionar participantes) ----------
+            if torneio["status"] == "CONFIGURANDO":
+                st.markdown("### Participantes")
+                if participantes:
+                    df_part = pd.DataFrame([
+                        {"Jogador": p["jogador_nome"], "Deck": p["deck_escolhido"], "Comandante": p["comandante_escolhido"]}
+                        for p in participantes
+                    ])
+                    st.dataframe(df_part, use_container_width=True, hide_index=True)
+
+                jogadores_com_deck_t = [j for j in st.session_state.jogadores if st.session_state.jogadores[j].get("decks")]
+                mapa_exib_t = {obter_nome_exibicao(st.session_state.jogadores[j], j): j for j in jogadores_com_deck_t}
+                catalogo_t = carregar_catalogo()
+                mapa_cmd_multi_t, _ = construir_mapa_comandantes_catalogo(catalogo_t)
+                OPCAO_CONV_T = "➕ Usuário Não Cadastrado"
+                nomes_ja_no_torneio = [p["jogador_nome"] for p in participantes]
+
+                st.markdown("**Adicionar participante:**")
+                opcoes_add = ["Selecione...", OPCAO_CONV_T] + list(mapa_exib_t.keys())
+                jog_add = st.selectbox("Jogador:", opcoes_add, key="torneio_add_jog")
+
+                deck_add = "Selecione..."
+                cmd_add = "Selecione..."
+                nome_final_add = None
+
+                if jog_add == OPCAO_CONV_T:
+                    nome_conv_t = st.text_input("Nome do convidado:", key="torneio_add_conv_nome")
+                    if nome_conv_t.strip():
+                        nome_final_add = f"{nome_conv_t.strip()} *"
+                        cmd_direto_t = st.selectbox("Comandante:", ["Selecione..."] + sorted(mapa_cmd_multi_t.keys()), key="torneio_add_conv_cmd")
+                        if cmd_direto_t != "Selecione...":
+                            decks_poss_t = mapa_cmd_multi_t.get(cmd_direto_t, [])
+                            if len(decks_poss_t) > 1:
+                                deck_add = st.selectbox("Qual deck?", ["Selecione..."] + decks_poss_t, key="torneio_add_conv_deck_amb")
+                            else:
+                                deck_add = decks_poss_t[0] if decks_poss_t else "Selecione..."
+                            if deck_add != "Selecione...":
+                                cmd_add = cmd_direto_t
+                                st.caption(f"Deck: **{deck_add}**")
+                elif jog_add in mapa_exib_t:
+                    nome_final_add = jog_add
+                    real_key_t = mapa_exib_t[jog_add]
+                    decks_jog_t = st.session_state.jogadores[real_key_t]["decks"]
+                    mapa_cmd_dk_t = {}
+                    for dk_n, dk_i in decks_jog_t.items():
+                        for c in [dk_i.get("comandante_primario", ""), dk_i.get("comandante_secundario", ""), dk_i.get("comandante_adicional", "")]:
+                            if c:
+                                mapa_cmd_dk_t.setdefault(c, [])
+                                if dk_n not in mapa_cmd_dk_t[c]:
+                                    mapa_cmd_dk_t[c].append(dk_n)
+                    cmd_direto_t2 = st.selectbox("Comandante:", ["Selecione..."] + list(mapa_cmd_dk_t.keys()), key="torneio_add_cmd_direto")
+                    if cmd_direto_t2 != "Selecione...":
+                        decks_poss_t2 = mapa_cmd_dk_t[cmd_direto_t2]
+                        if len(decks_poss_t2) > 1:
+                            deck_add = st.selectbox("Qual deck?", ["Selecione..."] + decks_poss_t2, key="torneio_add_deck_amb")
+                        else:
+                            deck_add = decks_poss_t2[0]
+                        if deck_add != "Selecione...":
+                            cmd_add = cmd_direto_t2
+                            st.caption(f"Deck: **{deck_add}**")
+
+                if st.button("Adicionar ao Torneio", key="torneio_btn_add_part"):
+                    if not nome_final_add or nome_final_add == "Selecione...":
+                        st.error("Selecione (ou digite) o jogador.")
+                    elif nome_final_add in nomes_ja_no_torneio:
+                        st.error("Esse jogador já está no torneio.")
+                    elif deck_add == "Selecione..." or cmd_add == "Selecione...":
+                        st.error("Escolha o comandante/deck do participante.")
+                    else:
+                        adicionar_participante_torneio(torneio_id, nome_final_add, deck_add, cmd_add)
+                        st.success(f"{nome_final_add} adicionado!")
+                        st.rerun()
+
+                if participantes:
+                    st.markdown("**Remover participante:**")
+                    rem_sel = st.selectbox("Jogador:", ["Selecione..."] + [p["jogador_nome"] for p in participantes], key="torneio_rem_sel")
+                    if rem_sel != "Selecione..." and st.button("Remover", key="torneio_btn_rem"):
+                        p_obj = next(p for p in participantes if p["jogador_nome"] == rem_sel)
+                        excluir_participante_torneio(p_obj["id"])
+                        st.rerun()
+
+                st.divider()
+                st.markdown(f"**{len(participantes)} participante(s) cadastrados**")
+
+                if len(participantes) >= torneio["qtd_classificados"]:
+                    if st.button("🎲 Iniciar Fase Classificatória (Sorteia Rodada 1)", type="primary", key="torneio_iniciar_class"):
+                        mesas = gerar_rodada_classificatoria(nomes_participantes, [], 1)
+                        for mesa in mesas:
+                            payload = [{"jogador": n, "eliminacoes": 0, "wo": False} for n in mesa]
+                            criar_confronto(torneio_id, "CLASSIFICATORIA", 1, payload)
+                        atualizar_status_torneio(torneio_id, "CLASSIFICATORIA")
+                        st.rerun()
+                else:
+                    st.info(f"Adicione pelo menos {torneio['qtd_classificados']} participantes (mesmo total dos classificados p/ mata-mata) para iniciar.")
+
+            # ---------- FASE 2: CLASSIFICATÓRIA (SUÍÇO) ----------
+            elif torneio["status"] == "CLASSIFICATORIA":
+                confrontos_class = [c for c in confrontos if c.get("fase") == "CLASSIFICATORIA"]
+                rodada_atual = max(c["rodada"] for c in confrontos_class) if confrontos_class else 1
+
+                st.markdown("### Classificação Atual")
+                tabela = calcular_classificacao_suico(nomes_participantes, confrontos_class)
+                st.dataframe(pd.DataFrame(tabela), use_container_width=True, hide_index=True)
+                st.caption("Pts = 3 por vitória · Elim = eliminações causadas (usado só como desempate)")
+
+                st.divider()
+                st.markdown(f"### Mesas da Rodada {rodada_atual}")
+                confrontos_rodada = [c for c in confrontos_class if c["rodada"] == rodada_atual]
+                pendentes_rodada = [c for c in confrontos_rodada if c["status"] != "CONCLUIDO"]
+
+                for c in confrontos_rodada:
+                    nomes_mesa = [info["jogador"] for info in c["jogadores"]]
+                    if c["status"] == "CONCLUIDO":
+                        venc = c["vencedor"]
+                        detalhes_str = " · ".join(
+                            f"{info['jogador']}: {info['eliminacoes']} elim" + (" (WO)" if info.get("wo") else "")
+                            for info in c["jogadores"]
+                        )
+                        st.markdown(f"**{' vs '.join(nomes_mesa)}** — ✅ Vencedor: **{venc}**  \n*{detalhes_str}*")
+                    else:
+                        with st.expander(f"Mesa: {' vs '.join(nomes_mesa)}"):
+                            wo_sel = st.multiselect("Jogadores que faltaram (WO):", nomes_mesa, key=f"torneio_wo_{c['id']}")
+                            presentes = [n for n in nomes_mesa if n not in wo_sel]
+                            venc_sel = st.selectbox("Vencedor:", ["Selecione..."] + presentes, key=f"torneio_venc_{c['id']}")
+                            elims_input = {}
+                            for n in presentes:
+                                elims_input[n] = st.number_input(
+                                    f"Eliminações de {n}:", min_value=0, max_value=max(len(nomes_mesa) - 1, 0),
+                                    value=0, step=1, key=f"torneio_elim_{c['id']}_{n}"
+                                )
+                            if st.button("Confirmar Resultado", key=f"torneio_confirmar_{c['id']}"):
+                                if venc_sel == "Selecione...":
+                                    st.error("Selecione o vencedor.")
+                                else:
+                                    bonus_wo = len(wo_sel)
+                                    payload = []
+                                    for n in nomes_mesa:
+                                        if n in wo_sel:
+                                            payload.append({"jogador": n, "eliminacoes": 0, "wo": True})
+                                        else:
+                                            payload.append({"jogador": n, "eliminacoes": elims_input[n] + bonus_wo, "wo": False})
+                                    registrar_resultado_confronto(c["id"], payload, venc_sel)
+                                    st.rerun()
+
+                st.divider()
+                if not pendentes_rodada and confrontos_rodada:
+                    col_prox, col_encerrar = st.columns(2)
+                    with col_prox:
+                        if st.button("➡️ Gerar Próxima Rodada", key="torneio_prox_rodada_class"):
+                            proxima = rodada_atual + 1
+                            mesas = gerar_rodada_classificatoria(nomes_participantes, confrontos_class, proxima)
+                            for mesa in mesas:
+                                payload = [{"jogador": n, "eliminacoes": 0, "wo": False} for n in mesa]
+                                criar_confronto(torneio_id, "CLASSIFICATORIA", proxima, payload)
+                            st.rerun()
+                    with col_encerrar:
+                        if st.button("🏆 Encerrar Classificatória e Gerar Mata-Mata", type="primary", key="torneio_encerrar_class"):
+                            tabela_final = calcular_classificacao_suico(nomes_participantes, confrontos_class)
+                            qtd = torneio["qtd_classificados"]
+                            if len(tabela_final) < qtd:
+                                st.error(f"Só há {len(tabela_final)} participantes; não é possível classificar {qtd}.")
+                            else:
+                                classificados = [linha["Jogador"] for linha in tabela_final[:qtd]]
+                                mesas_mm = gerar_mesas_matamata(classificados)
+                                for mesa in mesas_mm:
+                                    payload = [{"jogador": n, "eliminacoes": 0, "wo": False} for n in mesa]
+                                    criar_confronto(torneio_id, "MATA_MATA", 1, payload)
+                                atualizar_status_torneio(torneio_id, "MATA_MATA")
+                                st.rerun()
+                elif pendentes_rodada:
+                    st.info("Conclua todas as mesas da rodada atual antes de avançar.")
+
+            # ---------- FASE 3: MATA-MATA ----------
+            elif torneio["status"] == "MATA_MATA":
+                confrontos_mm = [c for c in confrontos if c.get("fase") == "MATA_MATA"]
+                rodadas_mm = sorted(set(c["rodada"] for c in confrontos_mm))
+                rodada_final_num = max(rodadas_mm) if rodadas_mm else 1
+
+                def _rotulo_rodada_mm(r):
+                    dist = rodada_final_num - r
+                    labels = ["Final", "Semifinal", "Quartas de Final", "Oitavas de Final"]
+                    return labels[dist] if dist < len(labels) else f"Rodada {r}"
+
+                st.markdown("### Chaveamento")
+                html_bracket = "<div style='display:flex; gap:32px; overflow-x:auto; padding:12px 0;'>"
+                for r in rodadas_mm:
+                    confrontos_r = [c for c in confrontos_mm if c["rodada"] == r]
+                    html_bracket += "<div style='display:flex; flex-direction:column; justify-content:space-around; gap:16px; min-width:230px;'>"
+                    html_bracket += f"<div style='text-align:center; color:#FFD700; font-weight:bold; font-size:13px; text-transform:uppercase;'>{_rotulo_rodada_mm(r)}</div>"
+                    for c in confrontos_r:
+                        nomes_mesa = [info["jogador"] for info in c["jogadores"]]
+                        venc = c.get("vencedor")
+                        segundo = None
+                        if c["status"] == "CONCLUIDO":
+                            _, segundo = determinar_avancantes_mesa(c)
+                        linhas_html = ""
+                        for n in nomes_mesa:
+                            if n == venc:
+                                cor, peso, tag = "#FFD700", "bold", " 🥇"
+                            elif n == segundo:
+                                cor, peso, tag = "#00CC66", "bold", " 🥈"
+                            elif venc:
+                                cor, peso, tag = "#888888", "normal", ""
+                            else:
+                                cor, peso, tag = "#FFFFFF", "normal", ""
+                            linhas_html += f"<div style='color:{cor}; font-weight:{peso}; font-size:13px;'>{n}{tag}</div>"
+                        html_bracket += f"<div style='border:1px solid rgba(250,250,250,0.2); border-radius:8px; padding:10px 14px; background-color:rgba(255,255,255,0.03);'>{linhas_html}</div>"
+                    html_bracket += "</div>"
+                html_bracket += "</div>"
+                st.markdown(html_bracket, unsafe_allow_html=True)
+                st.caption("🥇 vencedor da mesa · 🥈 segundo colocado (mais eliminações entre os demais) — ambos avançam")
+
+                st.divider()
+                st.markdown("### Registrar Resultados")
+                confrontos_rodada_mm = [c for c in confrontos_mm if c["rodada"] == rodada_final_num]
+                pendentes_mm = [c for c in confrontos_rodada_mm if c["status"] != "CONCLUIDO"]
+
+                for c in pendentes_mm:
+                    nomes_mesa = [info["jogador"] for info in c["jogadores"]]
+                    with st.expander(f"Mesa: {' vs '.join(nomes_mesa)}"):
+                        wo_sel_mm = st.multiselect("Jogadores que faltaram (WO):", nomes_mesa, key=f"torneio_mm_wo_{c['id']}")
+                        presentes_mm = [n for n in nomes_mesa if n not in wo_sel_mm]
+                        venc_sel_mm = st.selectbox("Vencedor:", ["Selecione..."] + presentes_mm, key=f"torneio_mm_venc_{c['id']}")
+                        elims_mm = {}
+                        for n in presentes_mm:
+                            elims_mm[n] = st.number_input(
+                                f"Eliminações de {n}:", min_value=0, max_value=max(len(nomes_mesa) - 1, 0),
+                                value=0, step=1, key=f"torneio_mm_elim_{c['id']}_{n}"
+                            )
+                        if st.button("Confirmar Resultado", key=f"torneio_mm_confirmar_{c['id']}"):
+                            if venc_sel_mm == "Selecione...":
+                                st.error("Selecione o vencedor.")
+                            else:
+                                bonus_wo_mm = len(wo_sel_mm)
+                                payload = []
+                                for n in nomes_mesa:
+                                    if n in wo_sel_mm:
+                                        payload.append({"jogador": n, "eliminacoes": 0, "wo": True})
+                                    else:
+                                        payload.append({"jogador": n, "eliminacoes": elims_mm[n] + bonus_wo_mm, "wo": False})
+                                registrar_resultado_confronto(c["id"], payload, venc_sel_mm)
+                                st.rerun()
+
+                if not pendentes_mm and confrontos_rodada_mm:
+                    if len(confrontos_rodada_mm) == 1:
+                        campeao, vice = determinar_avancantes_mesa(confrontos_rodada_mm[0])
+                        st.balloons()
+                        st.success(f"🏆 Campeão do torneio: **{campeao}**! 🥈 Vice: **{vice}**")
+                        if st.button("Finalizar Torneio", type="primary", key="torneio_finalizar"):
+                            atualizar_status_torneio(torneio_id, "FINALIZADO")
+                            st.rerun()
+                    else:
+                        if st.button("➡️ Gerar Próxima Rodada do Mata-Mata", type="primary", key="torneio_prox_rodada_mm"):
+                            avancantes = []
+                            for c in confrontos_rodada_mm:
+                                primeiro, segundo = determinar_avancantes_mesa(c)
+                                if primeiro:
+                                    avancantes.append(primeiro)
+                                if segundo:
+                                    avancantes.append(segundo)
+                            mesas_prox = gerar_mesas_matamata(avancantes)
+                            for mesa in mesas_prox:
+                                payload = [{"jogador": n, "eliminacoes": 0, "wo": False} for n in mesa]
+                                criar_confronto(torneio_id, "MATA_MATA", rodada_final_num + 1, payload)
+                            st.rerun()
+
+            # ---------- FASE 4: FINALIZADO ----------
+            elif torneio["status"] == "FINALIZADO":
+                confrontos_mm_final = [c for c in confrontos if c.get("fase") == "MATA_MATA"]
+                if confrontos_mm_final:
+                    rodada_final = max(c["rodada"] for c in confrontos_mm_final)
+                    final_confronto = next((c for c in confrontos_mm_final if c["rodada"] == rodada_final), None)
+                    if final_confronto:
+                        campeao, vice = determinar_avancantes_mesa(final_confronto)
+                        st.success(f"🏆 Torneio finalizado! Campeão: **{campeao}** · Vice: **{vice}**")
+                st.markdown("### Classificação Final da Fase Classificatória")
+                confrontos_class_final = [c for c in confrontos if c.get("fase") == "CLASSIFICATORIA"]
+                tabela_final_hist = calcular_classificacao_suico(nomes_participantes, confrontos_class_final)
+                st.dataframe(pd.DataFrame(tabela_final_hist), use_container_width=True, hide_index=True)
