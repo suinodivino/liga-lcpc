@@ -1251,23 +1251,26 @@ elif aba == "Nova Partida":
                 st.caption("Digite o nome para liberar a escolha do comandante.")
             return nome_final, deck_escolhido, cmd_escolhido
 
-        local_partida = st.selectbox("Local da Partida:", ["PRESENCIAL", "SPELLTABLE"], key="sel_local")
-        modo_partida = st.selectbox("Modo de Jogo:", ["SOLO", "DRAGÃO DE DUAS CABEÇAS", "ARCH ENEMY"], key="sel_modo")
+        MODO_DUPLAS = "DUEL COMMANDER / DRAGÃO DE DUAS CABEÇAS"
+        MODO_PENTAGRAMA = "PENTAGRAMA"
 
-        if modo_partida == "DRAGÃO DE DUAS CABEÇAS":
+        local_partida = st.selectbox("Local da Partida:", ["PRESENCIAL", "SPELLTABLE"], key="sel_local")
+        modo_partida = st.selectbox("Modo de Jogo:", ["SOLO", MODO_DUPLAS, MODO_PENTAGRAMA], key="sel_modo")
+
+        if modo_partida == MODO_DUPLAS:
             qtd_duplas = st.selectbox("Quantidade de Duplas:", [2, 3, 4], index=0, key="sel_qtd_duplas")
             qtd_jogadores = qtd_duplas * 2
-            st.info(f"Modo Dragão de Duas Cabeças: {qtd_duplas} duplas ({qtd_jogadores} jogadores).")
-        elif modo_partida == "ARCH ENEMY":
+            st.info(f"Modo Duel Commander / Dragão de Duas Cabeças: {qtd_duplas} duplas ({qtd_jogadores} jogadores).")
+        elif modo_partida == MODO_PENTAGRAMA:
             qtd_jogadores = 5
-            st.info("Modo Arch Enemy fixado em 5 jogadores.")
+            st.info("Modo Pentagrama fixado em 5 jogadores.")
         else:
             qtd_jogadores = st.selectbox("Quantidade de Jogadores:", [2, 3, 4, 5, 6, 7, 8], index=2, key="sel_qtd_jog")
 
         st.divider()
         st.subheader("Configuração dos Integrantes da Mesa")
 
-        if modo_partida == "DRAGÃO DE DUAS CABEÇAS":
+        if modo_partida == MODO_DUPLAS:
             letras_duplas = ["A", "B", "C", "D"]
             duplas_config = {}
             colunas_duplas = st.columns(qtd_duplas)
@@ -1347,7 +1350,7 @@ elif aba == "Nova Partida":
             else:
                 st.info("Aguardando a seleção de todos os integrantes, decks e comandantes para liberar a gravação...")
 
-        elif modo_partida == "ARCH ENEMY":
+        elif modo_partida == MODO_PENTAGRAMA:
             selecionados_nomes = []
             colunas_ae = st.columns(5)
             dados_ae = []
@@ -1355,7 +1358,7 @@ elif aba == "Nova Partida":
                 with colunas_ae[i]:
                     st.markdown(f"#### Posição {i+1}")
                     if i == 0:
-                        st.markdown("*Arch Enemy*")
+                        st.markdown("*Pentagrama*")
                     opcoes_filtradas = ["Selecione...", OPCAO_CONVIDADO] + [n for n in list(mapa_exib_para_real.keys()) if n not in selecionados_nomes]
                     jog_escolhido = st.selectbox(f"Jogador {i+1}:", opcoes_filtradas, key=f"ae_j_{i}")
                     deck_escolhido = "Selecione..."
@@ -1392,7 +1395,7 @@ elif aba == "Nova Partida":
 
             if len(validos_ae) == 5:
                 st.divider()
-                st.subheader("Classificação Final — Arch Enemy")
+                st.subheader("Classificação Final — Pentagrama")
                 coloca_ordem_ae = []
                 nomes_ae = [d["Jogador"] for d in validos_ae]
                 for pos in range(5):
@@ -1403,7 +1406,7 @@ elif aba == "Nova Partida":
                         coloca_ordem_ae.append(escolha)
 
                 if len(coloca_ordem_ae) == 5:
-                    if st.button("Gravar Resultado Arch Enemy", key="btn_salvar_ae"):
+                    if st.button("Gravar Resultado Pentagrama", key="btn_salvar_ae"):
                         tabela_ae = {
                             "PRESENCIAL": [200, 100, 100, 50, 50],
                             "SPELLTABLE": [100, 50, 50, 0, 0]
@@ -1423,7 +1426,7 @@ elif aba == "Nova Partida":
                         for i in range(5):
                             for k in [f"ae_j_{i}", f"ae_cmd_{i}", f"ae_dk_{i}", f"ae_cmd2_{i}", f"ae_pos_{i}", f"ae_{i}_conv_nome", f"ae_{i}_conv_cmd", f"ae_{i}_conv_c"]:
                                 if k in st.session_state: del st.session_state[k]
-                        st.session_state.mensagem_sucesso_partida = "Resultado Arch Enemy gravado com sucesso!"
+                        st.session_state.mensagem_sucesso_partida = "Resultado Pentagrama gravado com sucesso!"
                         st.rerun()
             else:
                 st.info("Aguardando a seleção de todos os 5 jogadores, decks e comandantes para liberar a classificação...")
@@ -1514,16 +1517,24 @@ elif aba == "Nova Partida":
 elif aba == "Statistics":
     st.header("Classificação e Estatísticas")
     if not st.session_state.partidas.empty:
+        MODO_DUPLAS = "DUEL COMMANDER / DRAGÃO DE DUAS CABEÇAS"
+        MODO_PENTAGRAMA = "PENTAGRAMA"
+        # Compatibilidade com partidas antigas gravadas antes da renomeação dos modos
+        ALIASES_MODO = {
+            MODO_DUPLAS: [MODO_DUPLAS, "DRAGÃO DE DUAS CABEÇAS"],
+            MODO_PENTAGRAMA: [MODO_PENTAGRAMA, "ARCH ENEMY"],
+        }
+
         st.subheader("Filtros de Classificação")
         c1, c2, c3, c4 = st.columns(4)
         with c1: f_local = st.selectbox("Local:", ["TODOS", "PRESENCIAL", "SPELLTABLE"])
-        with c2: f_modo = st.selectbox("Modo:", ["TODOS", "SOLO", "DRAGÃO DE DUAS CABEÇAS", "ARCH ENEMY"])
+        with c2: f_modo = st.selectbox("Modo:", ["TODOS", "SOLO", MODO_DUPLAS, MODO_PENTAGRAMA])
         with c3: f_tipo = st.selectbox("Ranking por:", ["Competidor", "Deck", "Comandante"])
         with c4: f_metrica = st.selectbox("Métrica:", ["Pontuação", "Vitórias"])
 
         df = st.session_state.partidas.copy()
         if f_local != "TODOS": df = df[df["Local"] == f_local]
-        if f_modo != "TODOS": df = df[df["Modo"] == f_modo]
+        if f_modo != "TODOS": df = df[df["Modo"].isin(ALIASES_MODO.get(f_modo, [f_modo]))]
 
         if not df.empty:
             dados_rank = []
