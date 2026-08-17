@@ -1205,6 +1205,52 @@ elif aba == "Nova Partida":
         mapa_exib_para_real = {obter_nome_exibicao(st.session_state.jogadores[j], j): j for j in jogadores_com_deck}
         lista_nomes_disponiveis = ["Selecione..."] + list(mapa_exib_para_real.keys())
 
+        OPCAO_CONVIDADO = "➕ Usuário Não Cadastrado"
+        catalogo_global = carregar_catalogo()
+        mapa_cmd_catalogo = {}
+        mapa_deck_cmds_catalogo = {}
+        for _dk in catalogo_global:
+            _cmds_dk = _dk.get("comandantes", []) or []
+            mapa_deck_cmds_catalogo[_dk["nome"]] = _cmds_dk
+            for _c in _cmds_dk:
+                if _c:
+                    mapa_cmd_catalogo[_c] = _dk["nome"]
+
+        def _eh_participante_valido(nome):
+            return nome != "Selecione..." and (nome in mapa_exib_para_real or nome.endswith(" *"))
+
+        def _campo_convidado(key_prefix):
+            """Renderiza o fluxo de seleção de nome + comandante + deck para um convidado
+            não cadastrado. Retorna (nome_final, deck_escolhido, cmd_escolhido)."""
+            nome_conv = st.text_input("Nome do convidado:", key=f"{key_prefix}_conv_nome", placeholder="Digite o nome")
+            deck_escolhido = "Selecione..."
+            cmd_escolhido = "Selecione..."
+            nome_final = "Selecione..."
+            if nome_conv.strip():
+                nome_final = f"{nome_conv.strip()} *"
+                cmd_direto = st.selectbox(
+                    "Comandante do convidado:",
+                    ["Selecione..."] + sorted(mapa_cmd_catalogo.keys()),
+                    key=f"{key_prefix}_conv_cmd"
+                )
+                if cmd_direto != "Selecione...":
+                    deck_escolhido = mapa_cmd_catalogo[cmd_direto]
+                    cmd_escolhido = cmd_direto
+                    st.caption(f"Deck: **{deck_escolhido}**")
+                    opcoes_cmd = mapa_deck_cmds_catalogo.get(deck_escolhido, [])
+                    if len(opcoes_cmd) > 1:
+                        cmd_sel = st.multiselect(
+                            "Partners adicionais (opcional):",
+                            [c for c in opcoes_cmd if c != cmd_direto],
+                            default=[],
+                            key=f"{key_prefix}_conv_c"
+                        )
+                        if cmd_sel:
+                            cmd_escolhido = " + ".join([cmd_direto] + cmd_sel)
+            else:
+                st.caption("Digite o nome para liberar a escolha do comandante.")
+            return nome_final, deck_escolhido, cmd_escolhido
+
         local_partida = st.selectbox("Local da Partida:", ["PRESENCIAL", "SPELLTABLE"], key="sel_local")
         modo_partida = st.selectbox("Modo de Jogo:", ["SOLO", "DRAGÃO DE DUAS CABEÇAS", "ARCH ENEMY"], key="sel_modo")
 
@@ -1233,11 +1279,14 @@ elif aba == "Nova Partida":
                     dupla_jogadores = []
                     for p_idx in range(2):
                         num_j = d_idx * 2 + p_idx + 1
-                        opcoes_j = ["Selecione..."] + [n for n in list(mapa_exib_para_real.keys()) if n not in todos_j_selecionados]
+                        opcoes_j = ["Selecione...", OPCAO_CONVIDADO] + [n for n in list(mapa_exib_para_real.keys()) if n not in todos_j_selecionados]
                         jog = st.selectbox(f"Jogador {p_idx+1}:", opcoes_j, key=f"dupla_j_{d_idx}_{p_idx}")
                         dk = "Selecione..."
                         cmd = "Selecione..."
-                        if jog in mapa_exib_para_real:
+                        jog_final = jog
+                        if jog == OPCAO_CONVIDADO:
+                            jog_final, dk, cmd = _campo_convidado(f"dupla_{d_idx}_{p_idx}")
+                        elif jog in mapa_exib_para_real:
                             todos_j_selecionados.append(jog)
                             real_key = mapa_exib_para_real[jog]
                             decks_jog = st.session_state.jogadores[real_key]["decks"]
@@ -1261,12 +1310,12 @@ elif aba == "Nova Partida":
                                         cmd = " + ".join(cmd_sel) if cmd_sel else "Selecione..."
                                     else:
                                         cmd = opcoes_cmd[0] if opcoes_cmd else "Selecione..."
-                        dupla_jogadores.append({"Jogador": jog, "Deck": dk, "Comandante": cmd})
+                        dupla_jogadores.append({"Jogador": jog_final, "Deck": dk, "Comandante": cmd})
                     duplas_config[letras_duplas[d_idx]] = dupla_jogadores
 
             # Verifica se todos estão preenchidos
             todos_validos = all(
-                p["Jogador"] in mapa_exib_para_real and p["Deck"] != "Selecione..." and p["Comandante"] != "Selecione..."
+                _eh_participante_valido(p["Jogador"]) and p["Deck"] != "Selecione..." and p["Comandante"] != "Selecione..."
                 for dupla in duplas_config.values() for p in dupla
             )
 
@@ -1307,11 +1356,14 @@ elif aba == "Nova Partida":
                     st.markdown(f"#### Posição {i+1}")
                     if i == 0:
                         st.markdown("*Arch Enemy*")
-                    opcoes_filtradas = ["Selecione..."] + [n for n in list(mapa_exib_para_real.keys()) if n not in selecionados_nomes]
+                    opcoes_filtradas = ["Selecione...", OPCAO_CONVIDADO] + [n for n in list(mapa_exib_para_real.keys()) if n not in selecionados_nomes]
                     jog_escolhido = st.selectbox(f"Jogador {i+1}:", opcoes_filtradas, key=f"ae_j_{i}")
                     deck_escolhido = "Selecione..."
                     cmd_escolhido = "Selecione..."
-                    if jog_escolhido in mapa_exib_para_real:
+                    jog_final = jog_escolhido
+                    if jog_escolhido == OPCAO_CONVIDADO:
+                        jog_final, deck_escolhido, cmd_escolhido = _campo_convidado(f"ae_{i}")
+                    elif jog_escolhido in mapa_exib_para_real:
                         selecionados_nomes.append(jog_escolhido)
                         real_key = mapa_exib_para_real[jog_escolhido]
                         decks_jog = st.session_state.jogadores[real_key]["decks"]
@@ -1334,9 +1386,9 @@ elif aba == "Nova Partida":
                                     cmd_escolhido = " + ".join(cmd_sel) if cmd_sel else "Selecione..."
                                 else:
                                     cmd_escolhido = opcoes_cmd[0] if opcoes_cmd else "Selecione..."
-                    dados_ae.append({"Jogador": jog_escolhido, "Deck": deck_escolhido, "Comandante": cmd_escolhido})
+                    dados_ae.append({"Jogador": jog_final, "Deck": deck_escolhido, "Comandante": cmd_escolhido})
 
-            validos_ae = [d for d in dados_ae if d["Jogador"] in mapa_exib_para_real and d["Deck"] != "Selecione..." and d["Comandante"] != "Selecione..."]
+            validos_ae = [d for d in dados_ae if _eh_participante_valido(d["Jogador"]) and d["Deck"] != "Selecione..." and d["Comandante"] != "Selecione..."]
 
             if len(validos_ae) == 5:
                 st.divider()
@@ -1369,7 +1421,7 @@ elif aba == "Nova Partida":
                         nova_linha = pd.DataFrame([{"ID": novo_id, "Local": local_partida, "Modo": modo_partida, "Jogadores": 5, "Detalhes_Pontuacao": detalhes_ae}])
                         st.session_state.partidas = pd.concat([st.session_state.partidas, nova_linha], ignore_index=True)
                         for i in range(5):
-                            for k in [f"ae_j_{i}", f"ae_cmd_{i}", f"ae_dk_{i}", f"ae_cmd2_{i}", f"ae_pos_{i}"]:
+                            for k in [f"ae_j_{i}", f"ae_cmd_{i}", f"ae_dk_{i}", f"ae_cmd2_{i}", f"ae_pos_{i}", f"ae_{i}_conv_nome", f"ae_{i}_conv_cmd", f"ae_{i}_conv_c"]:
                                 if k in st.session_state: del st.session_state[k]
                         st.session_state.mensagem_sucesso_partida = "Resultado Arch Enemy gravado com sucesso!"
                         st.rerun()
@@ -1383,11 +1435,14 @@ elif aba == "Nova Partida":
             for i in range(qtd_jogadores):
                 with colunas_jogadores[i]:
                     st.markdown(f"#### Posição {i+1}")
-                    opcoes_filtradas = ["Selecione..."] + [n for n in list(mapa_exib_para_real.keys()) if n not in selecionados_nomes]
+                    opcoes_filtradas = ["Selecione...", OPCAO_CONVIDADO] + [n for n in list(mapa_exib_para_real.keys()) if n not in selecionados_nomes]
                     jog_escolhido = st.selectbox(f"Jogador {i+1}:", opcoes_filtradas, key=f"solo_j_{i}")
                     deck_escolhido = "Selecione..."
                     cmd_escolhido = "Selecione..."
-                    if jog_escolhido in mapa_exib_para_real:
+                    jog_final = jog_escolhido
+                    if jog_escolhido == OPCAO_CONVIDADO:
+                        jog_final, deck_escolhido, cmd_escolhido = _campo_convidado(f"solo_{i}")
+                    elif jog_escolhido in mapa_exib_para_real:
                         selecionados_nomes.append(jog_escolhido)
                         real_key = mapa_exib_para_real[jog_escolhido]
                         decks_jog = st.session_state.jogadores[real_key]["decks"]
@@ -1416,9 +1471,9 @@ elif aba == "Nova Partida":
                                     cmd_escolhido = " + ".join(cmd_sel) if cmd_sel else "Selecione..."
                                 else:
                                     cmd_escolhido = opcoes_cmd[0] if opcoes_cmd else "Selecione..."
-                    dados_confronto.append({"Jogador": jog_escolhido, "Deck": deck_escolhido, "Comandante": cmd_escolhido})
+                    dados_confronto.append({"Jogador": jog_final, "Deck": deck_escolhido, "Comandante": cmd_escolhido})
 
-            validos = [d for d in dados_confronto if d["Jogador"] in mapa_exib_para_real and d["Deck"] != "Selecione..." and d["Comandante"] != "Selecione..."]
+            validos = [d for d in dados_confronto if _eh_participante_valido(d["Jogador"]) and d["Deck"] != "Selecione..." and d["Comandante"] != "Selecione..."]
             if len(validos) == qtd_jogadores:
                 st.divider()
                 st.subheader("Classificação Final da Partida Solo")
@@ -1446,7 +1501,7 @@ elif aba == "Nova Partida":
                         nova_linha = pd.DataFrame([{"ID": novo_id, "Local": local_partida, "Modo": modo_partida, "Jogadores": qtd_jogadores, "Detalhes_Pontuacao": detalhes_finais}])
                         st.session_state.partidas = pd.concat([st.session_state.partidas, nova_linha], ignore_index=True)
                         for i in range(qtd_jogadores):
-                            for key in [f"solo_j_{i}", f"solo_d_{i}", f"solo_c_{i}", f"solo_cmd_direto_{i}"]:
+                            for key in [f"solo_j_{i}", f"solo_d_{i}", f"solo_c_{i}", f"solo_cmd_direto_{i}", f"solo_{i}_conv_nome", f"solo_{i}_conv_cmd", f"solo_{i}_conv_c"]:
                                 if key in st.session_state: del st.session_state[key]
                         for pos in range(qtd_jogadores):
                             if f"colocacao_pos_{pos}" in st.session_state: del st.session_state[f"colocacao_pos_{pos}"]
