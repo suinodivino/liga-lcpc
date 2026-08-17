@@ -207,6 +207,48 @@ def carregar_catalogo():
     dados = sb.table("catalogo_precons").select("id, nome, comandantes, set_nome, data_lancamento, cartas, ranking, pontuacao_rank").execute().data
     return dados if dados else []
 
+def _cores_mana(mana_cost):
+    """Extrai o conjunto de cores (W/U/B/R/G) presentes num mana_cost."""
+    if not mana_cost:
+        return set()
+    return set(re.findall(r"\{([WUBRG])\}", mana_cost.upper()))
+
+@st.cache_data(ttl=3600)
+def construir_mapa_comandantes_catalogo(catalogo):
+    """Monta um mapa nome_comandante -> lista de decks onde a carta é válida
+    como comandante: o(s) comandante(s) oficial(is) de cada deck, mais qualquer
+    carta lendária da lista cujas cores batem com as do comandante original
+    (podendo assim ser movida para a zona de comando)."""
+    mapa = {}
+    mapa_deck_cmds_oficiais = {}
+    for deck in catalogo:
+        nome_deck = deck.get("nome", "")
+        cartas_deck = deck.get("cartas", []) or []
+        mapa_carta_nome = {c.get("nome"): c for c in cartas_deck}
+        comandantes_oficiais = [c for c in (deck.get("comandantes", []) or []) if c]
+        mapa_deck_cmds_oficiais[nome_deck] = comandantes_oficiais
+
+        cores_deck = set()
+        for cmd_nome in comandantes_oficiais:
+            carta_cmd = mapa_carta_nome.get(cmd_nome)
+            if carta_cmd:
+                cores_deck |= _cores_mana(carta_cmd.get("mana_cost", ""))
+            mapa.setdefault(cmd_nome, [])
+            if nome_deck not in mapa[cmd_nome]:
+                mapa[cmd_nome].append(nome_deck)
+
+        for carta in cartas_deck:
+            nome_carta = carta.get("nome")
+            if not nome_carta or nome_carta in comandantes_oficiais:
+                continue
+            if "legendary" not in carta.get("type_line", "").lower():
+                continue
+            if _cores_mana(carta.get("mana_cost", "")).issubset(cores_deck):
+                mapa.setdefault(nome_carta, [])
+                if nome_deck not in mapa[nome_carta]:
+                    mapa[nome_carta].append(nome_deck)
+    return mapa, mapa_deck_cmds_oficiais
+
 def buscar_precon_por_nome(nome_deck):
     resultado = sb.table("catalogo_precons").select("*").eq("nome", nome_deck).execute().data
     return resultado[0] if resultado else None
@@ -1207,17 +1249,18 @@ elif aba == "Nova Partida":
 
         OPCAO_CONVIDADO = "➕ Usuário Não Cadastrado"
         catalogo_global = carregar_catalogo()
-        mapa_cmd_catalogo = {}
-        mapa_deck_cmds_catalogo = {}
-        for _dk in catalogo_global:
-            _cmds_dk = _dk.get("comandantes", []) or []
-            mapa_deck_cmds_catalogo[_dk["nome"]] = _cmds_dk
-            for _c in _cmds_dk:
-                if _c:
-                    mapa_cmd_catalogo[_c] = _dk["nome"]
+        mapa_cmd_multideck_catalogo, mapa_deck_cmds_catalogo = construir_mapa_comandantes_catalogo(catalogo_global)
 
         def _eh_participante_valido(nome):
             return nome != "Selecione..." and (nome in mapa_exib_para_real or nome.endswith(" *"))
+
+        def _resolver_deck_ambiguo(opcoes_decks, key_prefix, label="Este comandante aparece em mais de um deck. Qual usar?"):
+            """Se o comandante escolhido pertence a mais de um deck, pede pra escolher qual.
+            Se só houver um, retorna direto sem exibir seletor extra."""
+            if len(opcoes_decks) <= 1:
+                return opcoes_decks[0] if opcoes_decks else "Selecione..."
+            escolha = st.selectbox(label, ["Selecione..."] + opcoes_decks, key=f"{key_prefix}_deck_amb")
+            return escolha
 
         def _campo_convidado(key_prefix):
             """Renderiza o fluxo de seleção de nome + comandante + deck para um convidado
@@ -1230,26 +1273,30 @@ elif aba == "Nova Partida":
                 nome_final = f"{nome_conv.strip()} *"
                 cmd_direto = st.selectbox(
                     "Comandante do convidado:",
-                    ["Selecione..."] + sorted(mapa_cmd_catalogo.keys()),
+                    ["Selecione..."] + sorted(mapa_cmd_multideck_catalogo.keys()),
                     key=f"{key_prefix}_conv_cmd"
                 )
                 if cmd_direto != "Selecione...":
-                    deck_escolhido = mapa_cmd_catalogo[cmd_direto]
-                    cmd_escolhido = cmd_direto
-                    st.caption(f"Deck: **{deck_escolhido}**")
-                    opcoes_cmd = mapa_deck_cmds_catalogo.get(deck_escolhido, [])
-                    if len(opcoes_cmd) > 1:
-                        cmd_sel = st.multiselect(
-                            "Partners adicionais (opcional):",
-                            [c for c in opcoes_cmd if c != cmd_direto],
-                            default=[],
-                            key=f"{key_prefix}_conv_c"
-                        )
-                        if cmd_sel:
-                            cmd_escolhido = " + ".join([cmd_direto] + cmd_sel)
+                    decks_possiveis = mapa_cmd_multideck_catalogo.get(cmd_direto, [])
+                    deck_escolhido = _resolver_deck_ambiguo(decks_possiveis, f"{key_prefix}_conv")
+                    if deck_escolhido != "Selecione...":
+                        cmd_escolhido = cmd_direto
+                        st.caption(f"Deck: **{deck_escolhido}**")
+                        opcoes_cmd = mapa_deck_cmds_catalogo.get(deck_escolhido, [])
+                        if len(opcoes_cmd) > 1:
+                            cmd_sel = st.multiselect(
+                                "Partners adicionais (opcional):",
+                                [c for c in opcoes_cmd if c != cmd_direto],
+                                default=[],
+                                key=f"{key_prefix}_conv_c"
+                            )
+                            if cmd_sel:
+                                cmd_escolhido = " + ".join([cmd_direto] + cmd_sel)
             else:
                 st.caption("Digite o nome para liberar a escolha do comandante.")
             return nome_final, deck_escolhido, cmd_escolhido
+
+
 
         MODO_DUPLAS = "DUEL COMMANDER / DRAGÃO DE DUAS CABEÇAS"
         MODO_PENTAGRAMA = "PENTAGRAMA"
@@ -1297,12 +1344,16 @@ elif aba == "Nova Partida":
                             mapa_cmd_dk = {}
                             for dk_n, dk_i in decks_jog.items():
                                 for c in [dk_i.get("comandante_primario",""), dk_i.get("comandante_secundario",""), dk_i.get("comandante_adicional","")]:
-                                    if c: mapa_cmd_dk[c] = dk_n
+                                    if c:
+                                        mapa_cmd_dk.setdefault(c, [])
+                                        if dk_n not in mapa_cmd_dk[c]:
+                                            mapa_cmd_dk[c].append(dk_n)
                             cmd_direto = st.selectbox(f"Comandante (J{num_j}):", ["Selecione..."] + list(mapa_cmd_dk.keys()), key=f"dupla_cmd_{d_idx}_{p_idx}")
                             if cmd_direto != "Selecione...":
-                                dk = mapa_cmd_dk[cmd_direto]
-                                cmd = cmd_direto
-                                st.caption(f"Deck: **{dk}**")
+                                dk = _resolver_deck_ambiguo(mapa_cmd_dk[cmd_direto], f"dupla_{d_idx}_{p_idx}_dk")
+                                if dk != "Selecione...":
+                                    cmd = cmd_direto
+                                    st.caption(f"Deck: **{dk}**")
                             else:
                                 dk = st.selectbox(f"Ou Deck (J{num_j}):", ["Selecione..."] + list(decks_jog.keys()), key=f"dupla_dk_{d_idx}_{p_idx}")
                                 if dk != "Selecione...":
@@ -1373,12 +1424,16 @@ elif aba == "Nova Partida":
                         mapa_cmd_dk = {}
                         for dk_n, dk_i in decks_jog.items():
                             for c in [dk_i.get("comandante_primario",""), dk_i.get("comandante_secundario",""), dk_i.get("comandante_adicional","")]:
-                                if c: mapa_cmd_dk[c] = dk_n
+                                if c:
+                                    mapa_cmd_dk.setdefault(c, [])
+                                    if dk_n not in mapa_cmd_dk[c]:
+                                        mapa_cmd_dk[c].append(dk_n)
                         cmd_direto = st.selectbox(f"Comandante:", ["Selecione..."] + list(mapa_cmd_dk.keys()), key=f"ae_cmd_{i}")
                         if cmd_direto != "Selecione...":
-                            deck_escolhido = mapa_cmd_dk[cmd_direto]
-                            cmd_escolhido = cmd_direto
-                            st.caption(f"Deck: **{deck_escolhido}**")
+                            deck_escolhido = _resolver_deck_ambiguo(mapa_cmd_dk[cmd_direto], f"ae_{i}_dk")
+                            if deck_escolhido != "Selecione...":
+                                cmd_escolhido = cmd_direto
+                                st.caption(f"Deck: **{deck_escolhido}**")
                         else:
                             deck_escolhido = st.selectbox(f"Ou Deck:", ["Selecione..."] + list(decks_jog.keys()), key=f"ae_dk_{i}")
                             if deck_escolhido != "Selecione...":
@@ -1424,7 +1479,7 @@ elif aba == "Nova Partida":
                         nova_linha = pd.DataFrame([{"ID": novo_id, "Local": local_partida, "Modo": modo_partida, "Jogadores": 5, "Detalhes_Pontuacao": detalhes_ae}])
                         st.session_state.partidas = pd.concat([st.session_state.partidas, nova_linha], ignore_index=True)
                         for i in range(5):
-                            for k in [f"ae_j_{i}", f"ae_cmd_{i}", f"ae_dk_{i}", f"ae_cmd2_{i}", f"ae_pos_{i}", f"ae_{i}_conv_nome", f"ae_{i}_conv_cmd", f"ae_{i}_conv_c"]:
+                            for k in [f"ae_j_{i}", f"ae_cmd_{i}", f"ae_dk_{i}", f"ae_cmd2_{i}", f"ae_pos_{i}", f"ae_{i}_conv_nome", f"ae_{i}_conv_cmd", f"ae_{i}_conv_c", f"ae_{i}_conv_deck_amb", f"ae_{i}_dk_deck_amb"]:
                                 if k in st.session_state: del st.session_state[k]
                         st.session_state.mensagem_sucesso_partida = "Resultado Pentagrama gravado com sucesso!"
                         st.rerun()
@@ -1452,18 +1507,22 @@ elif aba == "Nova Partida":
                         mapa_cmd_dk = {}
                         for dk_n, dk_i in decks_jog.items():
                             for c in [dk_i.get("comandante_primario",""), dk_i.get("comandante_secundario",""), dk_i.get("comandante_adicional","")]:
-                                if c: mapa_cmd_dk[c] = dk_n
+                                if c:
+                                    mapa_cmd_dk.setdefault(c, [])
+                                    if dk_n not in mapa_cmd_dk[c]:
+                                        mapa_cmd_dk[c].append(dk_n)
                         cmd_direto = st.selectbox(f"Comandante do Jogador {i+1}:", ["Selecione..."] + list(mapa_cmd_dk.keys()), key=f"solo_cmd_direto_{i}")
                         if cmd_direto != "Selecione...":
-                            deck_escolhido = mapa_cmd_dk.get(cmd_direto, "Selecione...")
-                            cmd_escolhido = cmd_direto
-                            st.caption(f"Deck: **{deck_escolhido}**")
-                            dk_obj = decks_jog.get(deck_escolhido, {})
-                            opcoes_cmd = [c for c in [dk_obj.get("comandante_primario",""), dk_obj.get("comandante_secundario",""), dk_obj.get("comandante_adicional","")] if c]
-                            if len(opcoes_cmd) > 1:
-                                cmd_sel = st.multiselect("Partners adicionais (opcional):", [c for c in opcoes_cmd if c != cmd_direto], default=[], key=f"solo_c_{i}")
-                                if cmd_sel:
-                                    cmd_escolhido = " + ".join([cmd_direto] + cmd_sel)
+                            deck_escolhido = _resolver_deck_ambiguo(mapa_cmd_dk.get(cmd_direto, []), f"solo_{i}_dk")
+                            if deck_escolhido != "Selecione...":
+                                cmd_escolhido = cmd_direto
+                                st.caption(f"Deck: **{deck_escolhido}**")
+                                dk_obj = decks_jog.get(deck_escolhido, {})
+                                opcoes_cmd = [c for c in [dk_obj.get("comandante_primario",""), dk_obj.get("comandante_secundario",""), dk_obj.get("comandante_adicional","")] if c]
+                                if len(opcoes_cmd) > 1:
+                                    cmd_sel = st.multiselect("Partners adicionais (opcional):", [c for c in opcoes_cmd if c != cmd_direto], default=[], key=f"solo_c_{i}")
+                                    if cmd_sel:
+                                        cmd_escolhido = " + ".join([cmd_direto] + cmd_sel)
                         else:
                             deck_escolhido = st.selectbox(f"Ou escolha pelo Deck:", ["Selecione..."] + list(decks_jog.keys()), key=f"solo_d_{i}")
                             if deck_escolhido != "Selecione...":
@@ -1504,7 +1563,7 @@ elif aba == "Nova Partida":
                         nova_linha = pd.DataFrame([{"ID": novo_id, "Local": local_partida, "Modo": modo_partida, "Jogadores": qtd_jogadores, "Detalhes_Pontuacao": detalhes_finais}])
                         st.session_state.partidas = pd.concat([st.session_state.partidas, nova_linha], ignore_index=True)
                         for i in range(qtd_jogadores):
-                            for key in [f"solo_j_{i}", f"solo_d_{i}", f"solo_c_{i}", f"solo_cmd_direto_{i}", f"solo_{i}_conv_nome", f"solo_{i}_conv_cmd", f"solo_{i}_conv_c"]:
+                            for key in [f"solo_j_{i}", f"solo_d_{i}", f"solo_c_{i}", f"solo_cmd_direto_{i}", f"solo_{i}_conv_nome", f"solo_{i}_conv_cmd", f"solo_{i}_conv_c", f"solo_{i}_conv_deck_amb", f"solo_{i}_dk_deck_amb"]:
                                 if key in st.session_state: del st.session_state[key]
                         for pos in range(qtd_jogadores):
                             if f"colocacao_pos_{pos}" in st.session_state: del st.session_state[f"colocacao_pos_{pos}"]
