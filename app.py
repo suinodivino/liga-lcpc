@@ -1137,11 +1137,10 @@ elif aba == "Decks":
             donos = nomes_decks_escolhidos.get(nome_cat, [])
             pts_cat = deck_cat.get("pontuacao_rank")
             media_pts_cat = calcular_media_pontuacao_catalogo()
-            pts_label = f" — {pts_cat:.0f} pts" if pts_cat is not None else ""
             if donos:
-                label_expander = f"{nome_cat.upper()}{pts_label} — ⚠️ Já escolhido por: {', '.join(donos)}"
+                label_expander = f"{nome_cat.upper()} — ⚠️ Já escolhido por: {', '.join(donos)}"
             else:
-                label_expander = f"{nome_cat.upper()}{pts_label}"
+                label_expander = f"{nome_cat.upper()}"
             with st.expander(label_expander):
                 # Badge de pontuação colorido
                 if pts_cat is not None:
