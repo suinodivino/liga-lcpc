@@ -271,16 +271,6 @@ def cor_pontuacao(pontuacao, media):
         return "#00CC66"
     return "#FF4444"
 
-def emoji_pontuacao(pontuacao, media):
-    """Retorna emoji colorido baseado na comparação com a pontuação média."""
-    if pontuacao is None or media is None:
-        return ""
-    if abs(pontuacao - media) < 0.01:
-        return "⚪"
-    if pontuacao > media:
-        return "🟢"
-    return "🔴"
-
 def badge_pontuacao(pontuacao, media):
     """Retorna HTML do badge de pontuação colorido."""
     if pontuacao is None:
@@ -1147,8 +1137,7 @@ elif aba == "Decks":
             donos = nomes_decks_escolhidos.get(nome_cat, [])
             pts_cat = deck_cat.get("pontuacao_rank")
             media_pts_cat = calcular_media_pontuacao_catalogo()
-            emoji = emoji_pontuacao(pts_cat, media_pts_cat)
-            pts_label = f" {emoji} {pts_cat:.0f} pts" if pts_cat is not None else ""
+            pts_label = f" — {pts_cat:.0f} pts" if pts_cat is not None else ""
             if donos:
                 label_expander = f"{nome_cat.upper()}{pts_label} — ⚠️ Já escolhido por: {', '.join(donos)}"
             else:
